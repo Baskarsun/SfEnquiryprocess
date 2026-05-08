@@ -1,0 +1,40 @@
+ To start the dev environment each session
+
+  Step 1 — Start services (run once per Windows session):
+  # In any terminal (no admin required):
+  cd C:\Users\SBaskar\SFEnquireProcess\infrastructure
+  .\start-dev.ps1
+
+  Step 2 — Start the Quarkus service (in a separate terminal):
+  cd C:\Users\SBaskar\SFEnquireProcess\infrastructure
+  start-lead-service.bat
+  Or directly:
+  cd services/lead-service
+  mvn quarkus:dev
+
+  First launch will download ~200 MB of Quarkus/Maven dependencies — subsequent starts take ~3 seconds.
+
+  ---
+  What happens on first mvn quarkus:dev
+
+  1. Flyway runs V1__initial_schema.sql → creates all tables, indexes
+  2. Flyway runs V2__reference_data.sql → seeds employees, branches, SLA config
+  3. Service starts on http://localhost:8080
+  4. Swagger UI → http://localhost:8080/swagger-ui
+
+  ---
+  API endpoints ready to test
+
+  ┌────────┬──────────────────────────────────┬─────────────────────────────────────────────────────┐
+  │ Method │               Path               │                    What it does                     │
+  ├────────┼──────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ POST   │ /api/v1/leads                    │ Create lead (LP1 + LP2) — requires X-User-Id header │
+  ├────────┼──────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ GET    │ /api/v1/leads/{lrn}              │ Get lead by LRN                                     │
+  ├────────┼──────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ POST   │ /api/v1/leads/{lrn}/assignments  │ Assign/re-assign (LP5)                              │
+  ├────────┼──────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ POST   │ /api/v1/leads/{lrn}/interactions │ Log interaction (LP6)                               │
+  ├────────┼──────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ GET    │ /api/v1/exception-queue          │ Exception queue (CPU view)                          │
+  └────────┴──────────────────────────────────┴─────────────────────────────────────────────────────┘

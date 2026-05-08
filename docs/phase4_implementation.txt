@@ -1,0 +1,112 @@
+Phase 4 — Opportunity, Quote & Application Origination
+=======================================================
+Duration: 10 weeks  |  Goal: PP5, PP6, PP7
+
+New files created
+-----------------
+
+DB Migration
+  services/lead-service/src/main/resources/db/migration/V5__phase4_schema.sql
+    Tables: asset_taxonomy, quote_master, document_checklist_config, opportunities,
+            quotes, application_documents, applications, cam_workflows
+    Sequences: OPPORTUNITY_ID, QUOTE_ID, APPLICATION_ID
+    Seeded default document checklist (INDIVIDUAL: PHOTO+PAN mandatory; COMMERCIAL: PAN mandatory)
+
+Domain Enums
+  domain/enums/OpportunityStatus.java   OPEN→QUOTED→QUOTE_LOCKED→APPLICATION_INITIATED→IN_APPRAISAL→SANCTIONED→WON/LOST/CLOSED
+  domain/enums/QuoteStatus.java         DRAFT→PENDING_APPROVAL→APPROVED/REJECTED→SHARED→LOCKED→UNLOCK_REQUESTED→SUPERSEDED
+  domain/enums/ApplicationStatus.java   INITIATED→FRAUD_SCREENING→PENDING→ELIGIBLE_FOR_APPLICATION→IN_APPRAISAL→SANCTIONED→CLOSED
+  domain/enums/CamStatus.java           NOT_STARTED→IN_PROGRESS→APPROVED/DECLINED
+
+Domain Models
+  domain/model/Opportunity.java         OPP-YYYY-NNNNNN; one per LoB per Prospect
+  domain/model/Quote.java               QT-YYYY-NNNNNN; versioned per Opportunity
+  domain/model/Application.java         APP-YYYY-NNNNNN; all fraud/KYC/CAM status fields
+  domain/model/ApplicationDocument.java KYC upload records with DMS index
+  domain/model/CamWorkflow.java         CAM tracking with sanction ID
+
+Infrastructure Adapters
+  infrastructure/adapter/ProductPriceAdapter.java    NDLP fetch (PP6.1); stub-mode
+  infrastructure/adapter/HunterSherlockAdapter.java  Fraud screening (PP7.4/7.9); non-blocking; stub-mode
+  infrastructure/adapter/CibilAdapter.java           CIBIL bureau (PP7.7); individual-only; non-blocking; stub-mode
+  infrastructure/adapter/DmsAdapter.java             KYC document upload (PP7.3); T/B/L routing; stub-mode
+
+Services
+  service/OpportunityService.java       PP5: creation, LOB-duplicate guard, category-duplicate (WARN/BLOCK)
+  service/QuoteService.java             PP6: create, approval workflow, share, lock/unlock, version supersession
+  service/ApplicationService.java       PP7: initiate, KYC upload, checklist evaluation, welcome comm
+  service/FraudScreeningService.java    PP7.4/7.7/7.9/7.11: Hunter+Sherlock, CIBIL, caution screening
+  service/CamWorkflowService.java       PP7.8: CAM initiate, approve/decline, sanction ID tracking
+
+Request DTOs
+  api/dto/request/CreateOpportunityRequest.java
+  api/dto/request/CreateQuoteRequest.java
+  api/dto/request/ApproveQuoteRequest.java
+  api/dto/request/LockUnlockQuoteRequest.java
+  api/dto/request/InitiateApplicationRequest.java
+  api/dto/request/UploadDocumentRequest.java
+  api/dto/request/InitiateCamRequest.java
+
+Response DTOs
+  api/dto/response/OpportunityResponse.java
+  api/dto/response/QuoteResponse.java
+  api/dto/response/ApplicationResponse.java  (includes DocumentSummary inner class)
+
+REST Resources
+  api/resource/OpportunityResource.java     POST/GET /api/v1/prospects/{id}/opportunities
+                                            GET /api/v1/opportunities/{id}
+  api/resource/QuoteResource.java           POST/GET /api/v1/opportunities/{id}/quotes
+                                            GET /api/v1/quotes/{id}
+                                            POST /api/v1/quotes/{id}/approve|share|lock
+  api/resource/ApplicationResource.java     POST/GET /api/v1/prospects/{id}/applications
+                                            GET /api/v1/applications/{id}
+                                            POST /api/v1/applications/{id}/documents
+                                            POST /api/v1/applications/{id}/cam/initiate|decision
+                                            GET /api/v1/applications/{id}/cam
+
+Tests (46 new)
+  test/service/OpportunityServiceTest.java   7 tests: ID format, error codes, duplicate action
+  test/service/QuoteServiceTest.java        16 tests: NDLP logic, pricing deviation, status machine, appraisal gate
+  test/service/ApplicationServiceTest.java  23 tests: ID format, doc types, prefixes, KYC checklist,
+                                                       non-individual auto-eligibility, modification codes,
+                                                       welcome comm lease matching, CAM state contracts
+
+Modified files
+--------------
+  domain/exception/ErrorCodes.java           +15 Phase 4 error codes (PP5/PP6/PP7/CAM)
+  infrastructure/locking/RedisSequenceGenerator.java  +generateOpportunityId(), +generateQuoteId(), +generateApplicationId()
+  infrastructure/messaging/LeadEventProducer.java     +5 Phase 4 events (OpportunityCreated, QuoteLocked, ApplicationInitiated, ApplicationEligible, CamApproved)
+  service/NotificationService.java           +5 Phase 4 notification stubs (caution, fraud, welcome, CAM approved/declined)
+  service/ProspectDashboardService.java      Fixed pre-existing compile error (wrong DashboardResponse API); +2 Phase 4 dashboard methods
+  resources/application.properties          +Phase 4 config block (ENV_INDICATOR, DMS/fraud/CIBIL/adapter settings)
+
+Business rules implemented
+--------------------------
+PP5.1  Asset Category + Asset Class + LoB Tag mandatory
+PP5.2  One Opportunity per LoB per Prospect (hard block)
+PP5.3  Duplicate detection (same Category+Class+LoB) → configurable WARN or BLOCK
+PP5.4  Opportunity ID generated on creation (OPP-YYYY-NNNNNN)
+
+PP6.1  Product Model Price (NDLP) check; cost override + advisory message when NDLP ≠ submitted
+PP6.2  Rack rate quote: no approval required
+PP6.3  Customised quote: pricing deviation (finance > cost) triggers approval workflow
+PP6.4  Unapproved customised quote cannot be shared
+PP6.5  Multiple quote versions per Opportunity; prior DRAFT/APPROVED versions superseded
+PP6.6  Quote state machine: Draft → [PendingApproval] → Approved → Shared → Locked
+        Post-lock edits blocked; unlock requires REQUEST_UNLOCK → APPROVE_UNLOCK
+PP6.7  Appraisal category mandatory before lock
+
+PP7.1  Application initiated from LOCKED quote; pre-filled from Prospect; APP-YYYY-NNNNNN
+PP7.2  Document checklist enforcement (PHOTO+PAN for individual; PAN for commercial)
+PP7.3  KYC document upload → DMS (T/B/L per ENV_INDICATOR); index stored per document
+PP7.5  Application ID, KYC status, CAM status always visible at Prospect screen
+PP7.7  Non-individual (commercial) lessee auto-advances to ELIGIBLE_FOR_APPLICATION
+PP7.8  Modification blocked when: CAM in non-final state (LN3713) or active fraud (LN3785)
+PP7.9  Modification delete-and-re-insert pattern documented in ApplicationService
+PP7.10 Fraud screening (Hunter+Sherlock) async post-save; non-blocking; failures suppressed
+PP7.11 CIBIL bureau request for individual lessees; non-2xx logged silently; non-blocking
+       Post-save caution screening; hard error blocks second commit; logs for Central Team
+PP7.12 Welcome email+SMS dispatched when eligible lease type reaches ELIGIBLE_FOR_APPLICATION
+
+CAM    CAM initiation in parallel with KYC; NOT_STARTED→IN_PROGRESS→APPROVED/DECLINED
+       Sanction ID and package tracked; visible on Prospect screen

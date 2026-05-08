@@ -1,0 +1,26 @@
+ docs/Leasing_Lead_Prospect_Functional_Specification_v2.md (v2.0, 2026-05-07):
+
+  - Section 0 — New high-level functional requirements table (HLR-01–HLR-15) and process end states table
+  - Changes from v1.0 — Summary table of all 26 additions by priority
+  - All v1.0 content preserved verbatim across Sections 1–14
+
+  Key additions integrated into the existing sections:
+  - LP2: Mobile validation (COM112–115), source-of-business restriction, CKYC capture/uniqueness, digital channel lease
+  type check, 35 km default radius, branch activation date guard
+  - LP4: OEM exemption named list (MSIL/TMF/TAFE/HYUNDAI), internal dedup codes LN4084/LN4088/LN3712, fraud status codes
+   FA/F, full profile on dedup match, CKYC in dedup set, COM103 for Aadhaar, caution email alert
+  - LP6: Autonomous transaction logging rule LP6.6
+  - LP8: Three-check gate, one-branch restriction (LN5098), branch activation at promotion (LN5099), APC/ANC codes on
+  closure (LN4926)
+  - PP5: Contract type validation, Vruddhi types 12/22/41/42/43/44
+  - PP7: Two-stage branch email, CIBIL re-initiation rules (LN3786/LN3780/LN3782), autonomous logging at application
+  stage
+  - PP8: APC code on customer creation, final caution alert email, Vruddhi downstream notification
+
+  New sections:
+  - Section 10.3 Interaction/Audit Log entity, 10.4 Branch entity
+  - Section 11.6 Applicant status model (APC/ANC/FA/F)
+  - Section 15 Configuration parameters reference (20 parameters)
+  - Section 16 Omissions and out-of-scope notes (12 lending rules explicitly excluded)
+  - Exceptions EX-31–EX-45 covering all new error conditions
+  - New glossary terms: CKYC, APC, ANC, Autonomous Transaction, Vruddhi, Processing Mode, Source-of-Business

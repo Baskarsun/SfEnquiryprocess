@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.sf.leasing.lead.service.LeadCreationServiceTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 6, Time elapsed: 0.017 s -- in com.sf.leasing.lead.service.LeadCreationServiceTest

@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:/Users/SBaskar/SFEnquireProcess\" log --oneline -10)",
+      "Bash(git -C \"C:/Users/SBaskar/SFEnquireProcess\" show --name-only HEAD)",
+      "Bash(git -C \"C:/Users/SBaskar/SFEnquireProcess\" ls-files)",
+      "Bash(git -C \"C:/Users/SBaskar/SFEnquireProcess\" show HEAD:Prospect_Creation_RS_v1.0/docs/domain_model.csv)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(mvn compile *)",
+      "Bash(mvn test *)",
+      "Bash(mvn package *)",
+      "Bash(docker --version)",
+      "Bash(docker info *)",
+      "Bash(sc query *)",
+      "Bash(powershell *)",
+      "Bash(scoop list *)",
+      "Bash(scoop bucket *)",
+      "Bash(pg_ctl status *)",
+      "Bash(redis-cli ping *)",
+      "Bash(pg_ctl start *)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist /FI \"PID eq $\\(netstat -ano)",
+      "PowerShell(netstat *)",
+      "Bash(psql -U postgres -c \"SELECT version\\(\\);\")",
+      "Bash(psql *)",
+      "PowerShell(psql *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(mvn quarkus:dev -Dquarkus.args=\"--no-color\")",
+      "Bash(xargs ls *)",
+      "Bash(mvn -pl services/lead-service compile -q)",
+      "Bash(mvn -pl services/lead-service test -Dquarkus.test.profile=test)",
+      "Bash(mvn -pl services/lead-service test)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\SBaskar\\\\SFEnquireProcess\\\\services\" -Directory)",
+      "Bash(Select-Object Name)",
+      "PowerShell(ls -Path \"C:\\\\Users\\\\SBaskar\\\\SFEnquireProcess\\\\services\" | Select-Object Name, @{Name=\"Type\";Expression={$_.GetType\\(\\).Name}})"
+    ]
+  }
+}
