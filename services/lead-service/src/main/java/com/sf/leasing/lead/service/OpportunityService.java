@@ -9,10 +9,12 @@ import com.sf.leasing.lead.domain.model.Opportunity;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.OpportunityRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,16 +30,25 @@ import java.util.stream.Collectors;
  *   PP5.3 — Duplicate detection (same Category + Class + LoB); WARN or BLOCK.
  *   PP5.4 — Asset taxonomy master validated on creation.
  */
-@ApplicationScoped
+@Service
 public class OpportunityService {
 
-    private static final Logger LOG = Logger.getLogger(OpportunityService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(OpportunityService.class);
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final LeadEventProducer eventProducer;
+    private final OpportunityRepository opportunityRepository;
+    private final ProspectRepository prospectRepository;
 
-    @Inject
-    LeadEventProducer eventProducer;
+    public OpportunityService(RedisSequenceGenerator sequenceGenerator,
+                               LeadEventProducer eventProducer,
+                               OpportunityRepository opportunityRepository,
+                               ProspectRepository prospectRepository) {
+        this.sequenceGenerator = sequenceGenerator;
+        this.eventProducer = eventProducer;
+        this.opportunityRepository = opportunityRepository;
+        this.prospectRepository = prospectRepository;
+    }
 
     // -------------------------------------------------------
     // PP5.1–PP5.4: Create Opportunity
@@ -48,22 +59,24 @@ public class OpportunityService {
         Prospect prospect = resolveProspect(prospectId);
 
         // PP5.2: one opportunity per LoB per Prospect
-        Opportunity existingForLob = Opportunity.findByProspectAndLob(prospect.id, req.lobTag);
+        Opportunity existingForLob = opportunityRepository
+            .findByProspectUuidAndLobTag(prospect.id, req.lobTag).orElse(null);
         if (existingForLob != null) {
             throw new BusinessException(ErrorCodes.OPPORTUNITY_LOB_DUPLICATE,
                 "An Opportunity already exists for LoB '" + req.lobTag + "' on this Prospect.");
         }
 
         // PP5.3: duplicate detection (same Category + Class + LoB) — configurable WARN or BLOCK
-        boolean categoryDuplicate = Opportunity.existsForProspectAndCategory(
-            prospect.id, req.assetCategory, req.assetClass, req.lobTag);
+        boolean categoryDuplicate = opportunityRepository
+            .existsByProspectUuidAndAssetCategoryAndAssetClassAndLobTag(
+                prospect.id, req.assetCategory, req.assetClass, req.lobTag);
 
         if (categoryDuplicate) {
             if ("BLOCK".equalsIgnoreCase(req.duplicateAction)) {
                 throw new BusinessException(ErrorCodes.OPPORTUNITY_CATEGORY_DUPLICATE,
                     "Duplicate Opportunity: same Asset Category/Class/LoB already exists (PP5.3).");
             } else {
-                LOG.warnf("PP5.3 duplicate warning: Prospect=%s assetCategory=%s assetClass=%s lobTag=%s",
+                LOG.warn("PP5.3 duplicate warning: Prospect={} assetCategory={} assetClass={} lobTag={}",
                     prospectId, req.assetCategory, req.assetClass, req.lobTag);
             }
         }
@@ -80,7 +93,7 @@ public class OpportunityService {
         opp.status            = OpportunityStatus.OPEN;
         opp.createdBy         = req.createdBy != null ? req.createdBy : userId;
         opp.createdAt         = LocalDateTime.now();
-        opp.persist();
+        opportunityRepository.save(opp);
 
         // Advance Prospect to IN_APPRAISAL when first opportunity is created
         if (prospect.status.name().equals("ACTIVE") || prospect.status.name().equals("VALIDATED")) {
@@ -90,7 +103,7 @@ public class OpportunityService {
         }
 
         eventProducer.publishOpportunityCreated(opportunityId, prospect.prospectId, req.lobTag, userId);
-        LOG.infof("Opportunity created: OPP=%s Prospect=%s LoB=%s", opportunityId, prospectId, req.lobTag);
+        LOG.info("Opportunity created: OPP={} Prospect={} LoB={}", opportunityId, prospectId, req.lobTag);
         return OpportunityResponse.from(opp);
     }
 
@@ -100,14 +113,14 @@ public class OpportunityService {
 
     public List<OpportunityResponse> listByProspect(String prospectId) {
         Prospect prospect = resolveProspect(prospectId);
-        return Opportunity.findByProspect(prospect.id)
+        return opportunityRepository.findByProspectUuid(prospect.id)
             .stream()
             .map(OpportunityResponse::from)
             .collect(Collectors.toList());
     }
 
     public OpportunityResponse getByOpportunityId(String opportunityId) {
-        Opportunity opp = Opportunity.findByOpportunityId(opportunityId);
+        Opportunity opp = opportunityRepository.findByOpportunityId(opportunityId).orElse(null);
         if (opp == null) {
             throw new BusinessException(ErrorCodes.OPPORTUNITY_NOT_FOUND, "Opportunity not found: " + opportunityId);
         }
@@ -119,10 +132,10 @@ public class OpportunityService {
     // -------------------------------------------------------
 
     Opportunity resolveOpportunityEntity(String opportunityId) {
-        Opportunity opp = Opportunity.findByOpportunityId(opportunityId);
+        Opportunity opp = opportunityRepository.findByOpportunityId(opportunityId).orElse(null);
         if (opp == null) {
             try {
-                opp = Opportunity.findById(UUID.fromString(opportunityId));
+                opp = opportunityRepository.findById(UUID.fromString(opportunityId)).orElse(null);
             } catch (IllegalArgumentException ignored) {}
         }
         if (opp == null) {
@@ -132,9 +145,9 @@ public class OpportunityService {
     }
 
     private Prospect resolveProspect(String id) {
-        Prospect p = id.startsWith("PR-") ? Prospect.findByProspectId(id) : null;
+        Prospect p = id.startsWith("PR-") ? prospectRepository.findByProspectId(id).orElse(null) : null;
         if (p == null) {
-            try { p = Prospect.findById(UUID.fromString(id)); } catch (IllegalArgumentException ignored) {}
+            try { p = prospectRepository.findById(UUID.fromString(id)).orElse(null); } catch (IllegalArgumentException ignored) {}
         }
         if (p == null) {
             throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + id);

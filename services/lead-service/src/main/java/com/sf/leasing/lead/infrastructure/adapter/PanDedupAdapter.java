@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * Adapter for the external PAN deduplication API (LP4.5).
@@ -13,12 +14,12 @@ import org.jboss.logging.Logger;
  *   COM66  → Soft warning (proceed; flag for review)
  *   CLEAR  → No duplicate found
  */
-@ApplicationScoped
+@Component
 public class PanDedupAdapter {
 
-    private static final Logger LOG = Logger.getLogger(PanDedupAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PanDedupAdapter.class);
 
-    @ConfigProperty(name = "adapters.pan-dedup.stub-mode", defaultValue = "true")
+    @Value("${adapters.pan-dedup.stub-mode:true}")
     boolean stubMode;
 
     public enum DedupCode {
@@ -44,11 +45,11 @@ public class PanDedupAdapter {
      */
     public PanDedupResult check(String pan) {
         if (stubMode) {
-            LOG.debugf("PAN dedup [STUB]: PAN=%s → CLEAR", pan);
+            LOG.debug("PAN dedup [STUB]: PAN={} → CLEAR", pan);
             return new PanDedupResult(DedupCode.CLEAR, null);
         }
         // TODO: wire to real PAN dedup REST endpoint
-        LOG.warnf("PAN dedup adapter is not configured. Returning CLEAR for PAN=%s", pan);
+        LOG.warn("PAN dedup adapter is not configured. Returning CLEAR for PAN={}", pan);
         return new PanDedupResult(DedupCode.CLEAR, null);
     }
 }

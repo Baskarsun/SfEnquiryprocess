@@ -9,11 +9,13 @@ import com.sf.leasing.lead.domain.model.ProspectKycValidation;
 import com.sf.leasing.lead.infrastructure.adapter.GstinValidationAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.PanValidationAdapter;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectKycValidationRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -28,28 +30,37 @@ import java.util.UUID;
  * - Manual override produces an OVERRIDDEN record and follows the same ID-generation path as SUCCESS.
  * - Lineage.prospectBusinessId is updated once the Prospect ID is assigned.
  */
-@ApplicationScoped
+@Service
 public class ProspectValidationService {
 
-    private static final Logger LOG = Logger.getLogger(ProspectValidationService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ProspectValidationService.class);
 
-    @ConfigProperty(name = "prospect.validation-failure-sla-hours", defaultValue = "24")
+    @Value("${prospect.validation-failure-sla-hours:24}")
     int validationFailureSlaHours;
 
-    @Inject
-    PanValidationAdapter panAdapter;
+    private final PanValidationAdapter panAdapter;
+    private final GstinValidationAdapter gstinAdapter;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final ExceptionQueueService exceptionQueueService;
+    private final NotificationService notificationService;
+    private final ProspectRepository prospectRepository;
+    private final ProspectKycValidationRepository prospectKycValidationRepository;
 
-    @Inject
-    GstinValidationAdapter gstinAdapter;
-
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
-
-    @Inject
-    ExceptionQueueService exceptionQueueService;
-
-    @Inject
-    NotificationService notificationService;
+    public ProspectValidationService(PanValidationAdapter panAdapter,
+                                     GstinValidationAdapter gstinAdapter,
+                                     RedisSequenceGenerator sequenceGenerator,
+                                     ExceptionQueueService exceptionQueueService,
+                                     NotificationService notificationService,
+                                     ProspectRepository prospectRepository,
+                                     ProspectKycValidationRepository prospectKycValidationRepository) {
+        this.panAdapter = panAdapter;
+        this.gstinAdapter = gstinAdapter;
+        this.sequenceGenerator = sequenceGenerator;
+        this.exceptionQueueService = exceptionQueueService;
+        this.notificationService = notificationService;
+        this.prospectRepository = prospectRepository;
+        this.prospectKycValidationRepository = prospectKycValidationRepository;
+    }
 
     // -------------------------------------------------------
     // PP3.1 — Trigger external KYC validation
@@ -61,10 +72,8 @@ public class ProspectValidationService {
         String type = (rawType != null ? rawType : "").toUpperCase().trim();
         validateType(type);
 
-        Prospect prospect = Prospect.findById(prospectId);
-        if (prospect == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId);
-        }
+        Prospect prospect = prospectRepository.findById(prospectId).orElseThrow(
+            () -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId));
         if (prospect.isClosed()) {
             throw new BusinessException(ErrorCodes.PROSPECT_ALREADY_CLOSED, "Cannot validate a closed prospect.");
         }
@@ -86,10 +95,8 @@ public class ProspectValidationService {
         String validationType = (rawType != null ? rawType : "").toUpperCase().trim();
         validateType(validationType);
 
-        Prospect prospect = Prospect.findById(prospectId);
-        if (prospect == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId);
-        }
+        Prospect prospect = prospectRepository.findById(prospectId).orElseThrow(
+            () -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId));
         if (prospect.isClosed()) {
             throw new BusinessException(ErrorCodes.PROSPECT_ALREADY_CLOSED, "Cannot override a closed prospect.");
         }
@@ -105,7 +112,7 @@ public class ProspectValidationService {
         kycRecord.overrideBy           = overrideBy;
         kycRecord.overrideAt           = LocalDateTime.now();
         kycRecord.validatedAt          = LocalDateTime.now();
-        kycRecord.persist();
+        prospectKycValidationRepository.save(kycRecord);
 
         // Mark the specific KYC flag as validated
         applyValidationFlag(prospect, validationType, null, null, null);
@@ -119,9 +126,10 @@ public class ProspectValidationService {
         prospect.validationOverrideAt      = LocalDateTime.now();
         prospect.updatedBy                 = overrideBy;
         prospect.updatedAt                 = LocalDateTime.now();
+        prospectRepository.save(prospect);
 
         notificationService.notifyKycOverride(prospect.prospectId, validationType, overrideBy);
-        LOG.infof("KYC override recorded: Prospect=%s type=%s by=%s", prospect.prospectId, validationType, overrideBy);
+        LOG.info("KYC override recorded: Prospect={} type={} by={}", prospect.prospectId, validationType, overrideBy);
 
         return prospect;
     }
@@ -148,21 +156,22 @@ public class ProspectValidationService {
             kycRecord.status            = "SUCCESS";
             kycRecord.legalName         = result.legalName();
             kycRecord.registeredAddress = result.registeredAddress();
-            kycRecord.persist();
+            prospectKycValidationRepository.save(kycRecord);
 
             applyValidationFlag(prospect, "PAN", result.legalName(), result.registeredAddress(), null);
             assignProspectIdIfAbsent(prospect);
+            prospectRepository.save(prospect);
 
             notificationService.notifyKycValidationSuccess(prospect.id.toString(), prospect.prospectId);
-            LOG.infof("PAN validated: Prospect=%s pan=%s", prospect.id, prospect.pan);
+            LOG.info("PAN validated: Prospect={} pan={}", prospect.id, prospect.pan);
         } else {
             kycRecord.status = "FAILED";
-            kycRecord.persist();
+            prospectKycValidationRepository.save(kycRecord);
 
             routeToExceptionQueue(prospect, "PAN", result.errorMessage());
             notificationService.notifyKycValidationFailure(
                 prospect.id.toString(), "PAN", result.errorMessage());
-            LOG.warnf("PAN validation failed: Prospect=%s reason=%s", prospect.id, result.errorMessage());
+            LOG.warn("PAN validation failed: Prospect={} reason={}", prospect.id, result.errorMessage());
         }
 
         return prospect;
@@ -187,21 +196,22 @@ public class ProspectValidationService {
             kycRecord.legalName         = result.legalEntityName();
             kycRecord.registeredAddress = result.registeredAddress();
             kycRecord.derivedPan        = result.derivedPan();
-            kycRecord.persist();
+            prospectKycValidationRepository.save(kycRecord);
 
             applyValidationFlag(prospect, "GSTIN", result.legalEntityName(), result.registeredAddress(), result.derivedPan());
             assignProspectIdIfAbsent(prospect);
+            prospectRepository.save(prospect);
 
             notificationService.notifyKycValidationSuccess(prospect.id.toString(), prospect.prospectId);
-            LOG.infof("GSTIN validated: Prospect=%s gstin=%s", prospect.id, prospect.gstin);
+            LOG.info("GSTIN validated: Prospect={} gstin={}", prospect.id, prospect.gstin);
         } else {
             kycRecord.status = "FAILED";
-            kycRecord.persist();
+            prospectKycValidationRepository.save(kycRecord);
 
             routeToExceptionQueue(prospect, "GSTIN", result.errorMessage());
             notificationService.notifyKycValidationFailure(
                 prospect.id.toString(), "GSTIN", result.errorMessage());
-            LOG.warnf("GSTIN validation failed: Prospect=%s reason=%s", prospect.id, result.errorMessage());
+            LOG.warn("GSTIN validation failed: Prospect={} reason={}", prospect.id, result.errorMessage());
         }
 
         return prospect;
@@ -243,7 +253,7 @@ public class ProspectValidationService {
             lineage.updatedAt          = LocalDateTime.now();
         }
 
-        LOG.infof("Prospect ID assigned: %s → %s", prospect.id, newId);
+        LOG.info("Prospect ID assigned: {} → {}", prospect.id, newId);
     }
 
     private void routeToExceptionQueue(Prospect prospect, String validationType, String reason) {

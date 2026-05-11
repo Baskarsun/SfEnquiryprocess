@@ -1,20 +1,21 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * External GSTIN validation adapter (PP3.1).
  * GSTIN format: 2-digit state code + 10-digit PAN + 1-digit entity number + 1-digit check + 'Z'.
  * derivedPan = chars at index 2–11 (positions 3–12 in 1-based notation).
  */
-@ApplicationScoped
+@Component
 public class GstinValidationAdapter {
 
-    private static final Logger LOG = Logger.getLogger(GstinValidationAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(GstinValidationAdapter.class);
 
-    @ConfigProperty(name = "adapters.gstin-validation.stub-mode", defaultValue = "true")
+    @Value("${adapters.gstin-validation.stub-mode:true}")
     boolean stubMode;
 
     public record GstinValidationResult(
@@ -36,7 +37,7 @@ public class GstinValidationAdapter {
 
     public GstinValidationResult validate(String gstin) {
         if (stubMode) {
-            LOG.debugf("GstinValidationAdapter STUB — GSTIN=%s", gstin);
+            LOG.debug("GstinValidationAdapter STUB — GSTIN={}", gstin);
             String derivedPan = (gstin != null && gstin.length() >= 12)
                 ? gstin.substring(2, 12)
                 : "ABCDE1234F";
@@ -48,7 +49,7 @@ public class GstinValidationAdapter {
         }
 
         // TODO: wire real GSTN verification API
-        LOG.warnf("GstinValidationAdapter real mode not implemented — GSTIN=%s", gstin);
+        LOG.warn("GstinValidationAdapter real mode not implemented — GSTIN={}", gstin);
         return GstinValidationResult.failure("SERVICE_UNAVAILABLE", "GSTIN validation service not configured.");
     }
 }

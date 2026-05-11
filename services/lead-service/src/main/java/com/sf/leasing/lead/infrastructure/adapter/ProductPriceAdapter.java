@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -12,12 +13,12 @@ import java.util.Optional;
  * If the submitted asset cost differs from NDLP, the cost is overridden and an advisory
  * message is returned to the caller.
  */
-@ApplicationScoped
+@Component
 public class ProductPriceAdapter {
 
-    private static final Logger LOG = Logger.getLogger(ProductPriceAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ProductPriceAdapter.class);
 
-    @ConfigProperty(name = "adapters.product-price.stub-mode", defaultValue = "true")
+    @Value("${adapters.product-price.stub-mode:true}")
     boolean stubMode;
 
     /**
@@ -26,7 +27,7 @@ public class ProductPriceAdapter {
      */
     public Optional<BigDecimal> fetchNdlp(String assetMake, String assetModel, Integer assetYear) {
         if (stubMode) {
-            LOG.debugf("ProductPriceAdapter stub: returning stub NDLP for %s %s %d",
+            LOG.debug("ProductPriceAdapter stub: returning stub NDLP for {} {} {}",
                 assetMake, assetModel, assetYear);
             // Stub returns a deterministic price based on make+model hash to allow testing
             int hash = ((assetMake != null ? assetMake : "") + (assetModel != null ? assetModel : "")).hashCode();
@@ -36,10 +37,10 @@ public class ProductPriceAdapter {
         try {
             // TODO: wire to real Product Price Service REST call
             // GET /api/v1/product-price?make={make}&model={model}&year={year}
-            LOG.infof("ProductPriceAdapter: fetching NDLP for %s %s %d", assetMake, assetModel, assetYear);
+            LOG.info("ProductPriceAdapter: fetching NDLP for {} {} {}", assetMake, assetModel, assetYear);
             return Optional.empty();
         } catch (Exception e) {
-            LOG.warnf("ProductPriceAdapter: service unavailable (%s); continuing without NDLP check",
+            LOG.warn("ProductPriceAdapter: service unavailable ({}); continuing without NDLP check",
                 e.getMessage());
             return Optional.empty();
         }

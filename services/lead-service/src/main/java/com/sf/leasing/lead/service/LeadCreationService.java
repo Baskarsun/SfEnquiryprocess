@@ -9,13 +9,16 @@ import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.*;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicantRepository;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
 import com.sf.leasing.lead.infrastructure.validation.AadhaarVerhoeffValidator;
 import com.sf.leasing.lead.infrastructure.validation.IdentityFormatValidator;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -24,40 +27,45 @@ import java.util.List;
 /**
  * Implements LP1 (auth validation) and LP2 (base lead creation) business rules.
  */
-@ApplicationScoped
+@Service
 public class LeadCreationService {
 
-    private static final Logger LOG = Logger.getLogger(LeadCreationService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(LeadCreationService.class);
     private static final String LOB_PREFIX = "LS";
     private static final String CPU_TEAM   = "CPU";
     private static final String CPU_USER   = "EMP001";
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final ExceptionQueueService exceptionQueueService;
+    private final DeduplicationService deduplicationService;
+    private final GeographicValidationService geographicValidationService;
+    private final LeadEventProducer eventProducer;
+    private final LeadRepository leadRepository;
+    private final ApplicantRepository applicantRepository;
 
-    @Inject
-    ExceptionQueueService exceptionQueueService;
+    @PersistenceContext
+    private EntityManager em;
 
-    @Inject
-    DeduplicationService deduplicationService;
-
-    @Inject
-    GeographicValidationService geographicValidationService;
-
-    @Inject
-    LeadEventProducer eventProducer;
-
-    @Inject
-    EntityManager em;
+    public LeadCreationService(RedisSequenceGenerator sequenceGenerator,
+                                ExceptionQueueService exceptionQueueService,
+                                DeduplicationService deduplicationService,
+                                GeographicValidationService geographicValidationService,
+                                LeadEventProducer eventProducer,
+                                LeadRepository leadRepository,
+                                ApplicantRepository applicantRepository) {
+        this.sequenceGenerator = sequenceGenerator;
+        this.exceptionQueueService = exceptionQueueService;
+        this.deduplicationService = deduplicationService;
+        this.geographicValidationService = geographicValidationService;
+        this.eventProducer = eventProducer;
+        this.leadRepository = leadRepository;
+        this.applicantRepository = applicantRepository;
+    }
 
     // -------------------------------------------------------
     // LP1: Authentication validation
     // -------------------------------------------------------
 
-    /**
-     * Validates the requesting user is active with an active employee record.
-     * Rule LP1.1, LP1.3: Failure halts all processing — no data is written.
-     */
     public void validateUserAndDevice(String userId, String primaryDeviceId, String secondaryDeviceId) {
         if (userId == null || userId.isBlank()) {
             throw new BusinessException(ErrorCodes.INVALID_USER, "User authentication is required.");
@@ -69,7 +77,6 @@ public class LeadCreationService {
                 "GL461: Invalid User — no active employee record found for user: " + userId);
         }
 
-        // Rule LP1.2: Primary IMEI → secondary fallback; both absent → legacy mode (allowed)
         String effectiveDeviceId = primaryDeviceId;
         if (effectiveDeviceId == null || effectiveDeviceId.isBlank()) {
             effectiveDeviceId = secondaryDeviceId;
@@ -91,7 +98,7 @@ public class LeadCreationService {
             "SELECT COUNT(*) FROM device_registry WHERE employee_id = ?1 AND (imei = ?2 OR device_uuid = ?2) AND is_authorised = TRUE"
         ).setParameter(1, userId).setParameter(2, deviceId).getSingleResult();
         if (count == 0) {
-            LOG.warnf("Device %s not registered for user %s — proceeding (legacy mode)", deviceId, userId);
+            LOG.warn("Device {} not registered for user {} — proceeding (legacy mode)", deviceId, userId);
         }
     }
 
@@ -102,31 +109,26 @@ public class LeadCreationService {
     @Transactional
     public CreateLeadResponse createLead(CreateLeadRequest req, String userId, Channel channel,
                                          Double latitude, Double longitude) {
-        // Step 1: Payload non-null guard
         if (req == null) {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Lead Input Values Is Required.");
         }
 
-        // Step 2: Lead Type mandatory
         if (req.leadType == null) {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Lead Type is required.");
         }
 
-        // Commercial: Company (Known As) + Contact Person mandatory
         if (req.leadType == LeadType.COMMERCIAL) {
             if (isBlank(req.companyKnownAs) || isBlank(req.contactPerson)) {
                 throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED,
                     "Company name and Contact Person are mandatory for Commercial leads.");
             }
         } else {
-            // Individual: Applicant Name on main applicant
             if (req.applicants == null || req.applicants.isEmpty() || isBlank(req.applicants.get(0).applicantName)) {
                 throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED,
                     "Applicant Name is mandatory for Individual leads.");
             }
         }
 
-        // Step 3: Source Category and Source Name mandatory
         if (req.sourceCategory == null) {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Source Category is mandatory.");
         }
@@ -134,7 +136,6 @@ public class LeadCreationService {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Source Name is mandatory.");
         }
 
-        // Step 4: Minimum identifier check — failure routes to Exception Queue, not rejection
         ApplicantRequest mainApplicant = req.applicants != null && !req.applicants.isEmpty()
             ? req.applicants.get(0) : null;
 
@@ -143,7 +144,6 @@ public class LeadCreationService {
         String pan     = mainApplicant != null ? mainApplicant.pan : null;
         String gstin   = mainApplicant != null ? mainApplicant.gstin : null;
         String address = mainApplicant != null ? mainApplicant.addressLine1 : null;
-        String name    = mainApplicant != null ? mainApplicant.applicantName : req.companyKnownAs;
 
         if (!IdentityFormatValidator.hasMinimumIdentifier(mobile, email, pan, gstin, address)) {
             exceptionQueueService.routeToExceptionQueue(
@@ -154,25 +154,20 @@ public class LeadCreationService {
             return CreateLeadResponse.routedToExceptionQueue();
         }
 
-        // Step 5: Mobile format validation
         if (mobile != null && !mobile.isBlank() && !IdentityFormatValidator.isValidMobile(mobile)) {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Invalid mobile number format.");
         }
 
-        // Step 5: PAN format if provided
         if (pan != null && !pan.isBlank() && !IdentityFormatValidator.isValidPan(pan)) {
             throw new BusinessException(ErrorCodes.LEAD_INPUT_REQUIRED, "Invalid PAN format. Expected: AAAAA9999A");
         }
 
-        // Step 5: Validate DAN if provided
         if (mainApplicant != null && !isBlank(mainApplicant.dan)) {
             validateDan(mainApplicant.dan);
         }
 
-        // Steps 6–7: Normalize applicants
         List<Applicant> applicants = buildApplicants(req);
 
-        // Step 6: Aadhaar Verhoeff if provided
         for (ApplicantRequest ar : safe(req.applicants)) {
             if (!isBlank(ar.aadhaar)) {
                 if (!AadhaarVerhoeffValidator.isValid(ar.aadhaar)) {
@@ -182,11 +177,9 @@ public class LeadCreationService {
             }
         }
 
-        // Steps 8–9: Generate Temp Customer Number and LRN
         String tempCustNo = sequenceGenerator.generateTempCustomerNumber();
         String lrn        = sequenceGenerator.generateLrn(LOB_PREFIX);
 
-        // Build Lead entity
         Lead lead = new Lead();
         lead.lrn                       = lrn;
         lead.tempCustomerNumber        = tempCustNo;
@@ -206,40 +199,34 @@ public class LeadCreationService {
         lead.createdBy                 = userId;
         lead.createdAt                 = LocalDateTime.now();
 
-        // Step 9: Geotag if mobile + GPS active
         if (channel == Channel.MOBILE && latitude != null && longitude != null) {
             lead.latitude          = latitude;
             lead.longitude         = longitude;
             lead.geotagCapturedAt  = LocalDateTime.now();
         }
 
-        lead.persist();
+        leadRepository.save(lead);
 
-        // Attach applicants
         for (Applicant applicant : applicants) {
             applicant.lead = lead;
-            applicant.persist();
+            applicantRepository.save(applicant);
         }
-        // Expose persisted applicants so dedup and validation can access them without a DB round-trip
         lead.applicants = applicants;
 
-        // Step 8 (geographic validation): delegate to GeographicValidationService (Phase 2)
         boolean geoWarning = false;
         if (mainApplicant != null && !isBlank(mainApplicant.pincode)) {
             boolean geoValid = geographicValidationService.validatePincodeBranch(
                 mainApplicant.pincode, CPU_TEAM, channel);
             if (!geoValid) {
-                geoWarning = true;  // Mobile: warning only; desktop raises exception inside service
+                geoWarning = true;
             }
         }
 
-        // Phase 2 — LP4: Run deduplication checks after lead + applicants are persisted
         deduplicationService.runDedupChecks(lead, channel != Channel.BULK);
 
-        // Publish event
         eventProducer.publishLeadCreated(lrn, tempCustNo, userId, channel.name());
 
-        LOG.infof("Lead created: LRN=%s TempCustNo=%s by user=%s channel=%s", lrn, tempCustNo, userId, channel);
+        LOG.info("Lead created: LRN={} TempCustNo={} by user={} channel={}", lrn, tempCustNo, userId, channel);
         CreateLeadResponse resp = CreateLeadResponse.success(lrn, tempCustNo);
         if (geoWarning) resp.warning = "LN3955: Applicant pincode is outside the branch service area (save allowed on mobile).";
         return resp;
@@ -255,9 +242,9 @@ public class LeadCreationService {
         for (int i = 0; i < applicantReqs.size(); i++) {
             ApplicantRequest ar = applicantReqs.get(i);
             Applicant a = new Applicant();
-            a.applicantLabel    = i == 0 ? "MAIN APPLICANT" : "ADDL APPLICANT - " + i;  // Rule LP2.7
+            a.applicantLabel    = i == 0 ? "MAIN APPLICANT" : "ADDL APPLICANT - " + i;
             a.applicantName     = ar.applicantName;
-            a.gender            = normalizeGender(ar.gender, ar.constitutionType);       // Rule LP2.5
+            a.gender            = normalizeGender(ar.gender, ar.constitutionType);
             a.dateOfBirth       = ar.dateOfBirth;
             a.constitutionType  = ar.constitutionType;
             a.residentialType   = ar.residentialType != null ? ar.residentialType : "RESIDENT";
@@ -270,7 +257,7 @@ public class LeadCreationService {
             a.voterId           = ar.voterId;
             a.drivingLicence    = ar.drivingLicence;
             a.dan               = ar.dan;
-            a.panExemptionFlag  = isBlank(ar.dan) ? "N" : "Y";                           // Rule LP2.6
+            a.panExemptionFlag  = isBlank(ar.dan) ? "N" : "Y";
             a.occupation        = ar.occupation;
             a.addressLine1      = ar.addressLine1;
             a.addressLine2      = ar.addressLine2;
@@ -284,20 +271,12 @@ public class LeadCreationService {
         return result;
     }
 
-    /**
-     * Rule LP2.5: Male → M; all others → F; Non-Individual: gender cleared.
-     */
     private String normalizeGender(String raw, String constitutionType) {
-        if ("NON_INDIVIDUAL".equalsIgnoreCase(constitutionType)) {
-            return null;
-        }
+        if ("NON_INDIVIDUAL".equalsIgnoreCase(constitutionType)) return null;
         if ("male".equalsIgnoreCase(raw)) return "M";
         return "F";
     }
 
-    /**
-     * Rule LP2.6: DAN must exist and not have been previously used.
-     */
     private void validateDan(String dan) {
         List<Object[]> rows = em.createNativeQuery(
             "SELECT is_used FROM dan_registry WHERE dan = ?1"

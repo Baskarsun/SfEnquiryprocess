@@ -2,16 +2,14 @@ package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.ApplicationStatus;
 import com.sf.leasing.lead.domain.enums.CamStatus;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "applications")
-public class Application extends PanacheEntityBase {
+public class Application {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -115,19 +113,4 @@ public class Application extends PanacheEntityBase {
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
 
-    @OneToMany
-    @JoinColumn(name = "application_id", referencedColumnName = "id")
-    public List<ApplicationDocument> documents;
-
-    public static Application findByApplicationId(String applicationId) {
-        return find("applicationId", applicationId).firstResult();
-    }
-
-    public static List<Application> findByProspect(UUID prospectUuid) {
-        return list("prospectUuid", prospectUuid);
-    }
-
-    public static Application findByQuote(UUID quoteId) {
-        return find("quoteId", quoteId).firstResult();
-    }
 }

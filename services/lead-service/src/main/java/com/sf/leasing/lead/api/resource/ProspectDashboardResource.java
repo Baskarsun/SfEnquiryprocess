@@ -2,66 +2,71 @@ package com.sf.leasing.lead.api.resource;
 
 import com.sf.leasing.lead.api.dto.response.DashboardResponse;
 import com.sf.leasing.lead.service.ProspectDashboardService;
-import jakarta.inject.Inject;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
-@Path("/api/v1/dashboards/prospects")
-@Produces(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/dashboards/prospects")
 @Tag(name = "ProspectDashboard", description = "Phase 3 dashboards: Pipeline, KYC, Conversion")
 public class ProspectDashboardResource {
 
-    @Inject
-    ProspectDashboardService dashboardService;
+    private final ProspectDashboardService dashboardService;
+
+    public ProspectDashboardResource(ProspectDashboardService dashboardService) {
+        this.dashboardService = dashboardService;
+    }
 
     /**
      * GET /api/v1/dashboards/prospects/pipeline?branchCode=
      * Prospect count grouped by status (DRAFT / VALIDATED / ACTIVE / IN_APPRAISAL / etc.).
      */
-    @GET
-    @Path("/pipeline")
+    @GetMapping("/pipeline")
     @Operation(summary = "Prospect pipeline by status")
-    public Response pipeline(@QueryParam("branchCode") String branchCode) {
+    public ResponseEntity<?> pipeline(
+        @RequestParam(value = "branchCode", required = false) String branchCode
+    ) {
         DashboardResponse report = dashboardService.prospectPipeline(branchCode);
-        return Response.ok(report).build();
+        return ResponseEntity.ok(report);
     }
 
     /**
      * GET /api/v1/dashboards/prospects/exception-queue
      * Summary of prospect validation exception queue entries by status.
      */
-    @GET
-    @Path("/exception-queue")
+    @GetMapping("/exception-queue")
     @Operation(summary = "Prospect validation exception queue summary")
-    public Response exceptionQueue(@QueryParam("branchCode") String branchCode) {
+    public ResponseEntity<?> exceptionQueue(
+        @RequestParam(value = "branchCode", required = false) String branchCode
+    ) {
         DashboardResponse report = dashboardService.exceptionQueueSummary(branchCode);
-        return Response.ok(report).build();
+        return ResponseEntity.ok(report);
     }
 
     /**
      * GET /api/v1/dashboards/prospects/conversion?branchCode=
      * Lead → Prospect conversion metrics for the last 30 days.
      */
-    @GET
-    @Path("/conversion")
+    @GetMapping("/conversion")
     @Operation(summary = "Lead-to-Prospect conversion metrics (30d)")
-    public Response conversion(@QueryParam("branchCode") String branchCode) {
+    public ResponseEntity<?> conversion(
+        @RequestParam(value = "branchCode", required = false) String branchCode
+    ) {
         DashboardResponse report = dashboardService.conversionMetrics(branchCode);
-        return Response.ok(report).build();
+        return ResponseEntity.ok(report);
     }
 
     /**
      * GET /api/v1/dashboards/prospects/kyc?branchCode=
      * KYC outcome breakdown: SUCCESS / FAILED / OVERRIDDEN.
      */
-    @GET
-    @Path("/kyc")
+    @GetMapping("/kyc")
     @Operation(summary = "KYC validation outcomes breakdown")
-    public Response kycOutcomes(@QueryParam("branchCode") String branchCode) {
+    public ResponseEntity<?> kycOutcomes(
+        @RequestParam(value = "branchCode", required = false) String branchCode
+    ) {
         DashboardResponse report = dashboardService.kycOutcomes(branchCode);
-        return Response.ok(report).build();
+        return ResponseEntity.ok(report);
     }
 }

@@ -9,10 +9,14 @@ import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.domain.model.Lineage;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,27 +35,37 @@ import java.util.List;
  * The Prospect.prospectId (PR-YYYY-NNNNNN) is NOT set here — it is gated on
  * successful external KYC validation by ProspectValidationService (PP3).
  */
-@ApplicationScoped
+@Service
 public class ProspectPromotionService {
 
-    private static final Logger LOG = Logger.getLogger(ProspectPromotionService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ProspectPromotionService.class);
 
-    @Inject
-    LeadQualificationService qualificationService;
+    @PersistenceContext
+    EntityManager em;
 
-    @Inject
-    LeadEventProducer eventProducer;
+    private final LeadQualificationService qualificationService;
+    private final LeadEventProducer eventProducer;
+    private final NotificationService notificationService;
+    private final LeadRepository leadRepository;
+    private final ProspectRepository prospectRepository;
 
-    @Inject
-    NotificationService notificationService;
+    public ProspectPromotionService(LeadQualificationService qualificationService,
+                                    LeadEventProducer eventProducer,
+                                    NotificationService notificationService,
+                                    LeadRepository leadRepository,
+                                    ProspectRepository prospectRepository) {
+        this.qualificationService = qualificationService;
+        this.eventProducer = eventProducer;
+        this.notificationService = notificationService;
+        this.leadRepository = leadRepository;
+        this.prospectRepository = prospectRepository;
+    }
 
     @Transactional
     public ProspectPromotionResponse promote(String lrn, String promotedBy) {
         // Load and guard Lead
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) {
-            throw new BusinessException(ErrorCodes.LEAD_NOT_FOUND, "Lead not found: " + lrn);
-        }
+        Lead lead = leadRepository.findByLrn(lrn).orElseThrow(
+            () -> new BusinessException(ErrorCodes.LEAD_NOT_FOUND, "Lead not found: " + lrn));
         if (lead.isPromoted()) {
             throw new BusinessException(ErrorCodes.LEAD_ALREADY_PROMOTED, "Lead is already promoted: " + lrn);
         }
@@ -81,7 +95,7 @@ public class ProspectPromotionService {
             ? lead.assignmentHierarchyLevel.name() : null;
         prospect.createdBy           = promotedBy;
         prospect.createdAt           = LocalDateTime.now();
-        prospect.persist();
+        prospectRepository.save(prospect);
 
         // Create immutable Lineage record
         Lineage lineage = new Lineage();
@@ -89,7 +103,7 @@ public class ProspectPromotionService {
         lineage.leadId        = lead.id;
         lineage.prospectUuid  = prospect.id;
         lineage.createdAt     = LocalDateTime.now();
-        lineage.persist();
+        em.persist(lineage);
 
         // Transition Lead → PROMOTED
         lead.status      = LeadStatus.PROMOTED;
@@ -97,12 +111,13 @@ public class ProspectPromotionService {
         lead.prospectId  = prospect.id.toString();
         lead.updatedBy   = promotedBy;
         lead.updatedAt   = LocalDateTime.now();
+        leadRepository.save(lead);
 
         // Publish event and notify
         eventProducer.publishLeadPromoted(lrn, prospect.id.toString(), promotedBy);
         notificationService.notifyLeadPromoted(lrn, prospect.id.toString(), promotedBy);
 
-        LOG.infof("Lead promoted to Prospect: LRN=%s prospectUuid=%s by=%s", lrn, prospect.id, promotedBy);
+        LOG.info("Lead promoted to Prospect: LRN={} prospectUuid={} by={}", lrn, prospect.id, promotedBy);
         return ProspectPromotionResponse.of(prospect.id, lrn, warnings);
     }
 

@@ -7,28 +7,28 @@ import com.sf.leasing.lead.api.dto.response.ApplicationResponse;
 import com.sf.leasing.lead.domain.model.CamWorkflow;
 import com.sf.leasing.lead.service.ApplicationService;
 import com.sf.leasing.lead.service.CamWorkflowService;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
-@Path("/api/v1")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1")
 @Tag(name = "Application", description = "PP7: Application origination, KYC upload, CAM workflow")
 public class ApplicationResource {
 
-    @Inject
-    ApplicationService applicationService;
+    private final ApplicationService applicationService;
+    private final CamWorkflowService camWorkflowService;
 
-    @Inject
-    CamWorkflowService camWorkflowService;
+    public ApplicationResource(ApplicationService applicationService,
+                                CamWorkflowService camWorkflowService) {
+        this.applicationService = applicationService;
+        this.camWorkflowService = camWorkflowService;
+    }
 
     // -------------------------------------------------------
     // PP7.1: Initiate Application
@@ -38,19 +38,18 @@ public class ApplicationResource {
      * POST /api/v1/prospects/{prospectId}/applications
      * PP7.1: Initiate an Application from a locked Quote.
      */
-    @POST
-    @Path("/prospects/{prospectId}/applications")
+    @PostMapping("/prospects/{prospectId}/applications")
     @Operation(summary = "Initiate application for a prospect (PP7.1)")
-    public Response initiateApplication(
-        @PathParam("prospectId") String prospectId,
-        @Valid InitiateApplicationRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<ApplicationResponse> initiateApplication(
+        @PathVariable("prospectId") String prospectId,
+        @Valid @RequestBody InitiateApplicationRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         ApplicationResponse app = applicationService.initiateApplication(prospectId, req, userId);
-        return Response.status(Response.Status.CREATED).entity(app).build();
+        return ResponseEntity.status(201).body(app);
     }
 
     // -------------------------------------------------------
@@ -61,35 +60,33 @@ public class ApplicationResource {
      * GET /api/v1/prospects/{prospectId}/applications
      * PP7.5: List all applications; KYC status and CAM status visible at Prospect screen.
      */
-    @GET
-    @Path("/prospects/{prospectId}/applications")
+    @GetMapping("/prospects/{prospectId}/applications")
     @Operation(summary = "List applications for prospect with KYC/CAM status (PP7.5)")
-    public Response listApplications(
-        @PathParam("prospectId") String prospectId,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<List<ApplicationResponse>> listApplications(
+        @PathVariable("prospectId") String prospectId,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         List<ApplicationResponse> apps = applicationService.listByProspect(prospectId);
-        return Response.ok(apps).build();
+        return ResponseEntity.ok(apps);
     }
 
     /**
      * GET /api/v1/applications/{applicationId}
      * PP7.5: Get application by ID.
      */
-    @GET
-    @Path("/applications/{applicationId}")
+    @GetMapping("/applications/{applicationId}")
     @Operation(summary = "Get application by ID (PP7.5)")
-    public Response getApplication(
-        @PathParam("applicationId") String applicationId,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<ApplicationResponse> getApplication(
+        @PathVariable("applicationId") String applicationId,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
-        return Response.ok(applicationService.getByApplicationId(applicationId)).build();
+        return ResponseEntity.ok(applicationService.getByApplicationId(applicationId));
     }
 
     // -------------------------------------------------------
@@ -100,19 +97,18 @@ public class ApplicationResource {
      * POST /api/v1/applications/{applicationId}/documents
      * PP7.3: Upload a KYC document. Routes to DMS (T/B/L per ENV_INDICATOR).
      */
-    @POST
-    @Path("/applications/{applicationId}/documents")
+    @PostMapping("/applications/{applicationId}/documents")
     @Operation(summary = "Upload KYC document to DMS (PP7.3)")
-    public Response uploadDocument(
-        @PathParam("applicationId") String applicationId,
-        @Valid UploadDocumentRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<ApplicationResponse> uploadDocument(
+        @PathVariable("applicationId") String applicationId,
+        @Valid @RequestBody UploadDocumentRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         ApplicationResponse app = applicationService.uploadDocument(applicationId, req, userId);
-        return Response.ok(app).build();
+        return ResponseEntity.ok(app);
     }
 
     // -------------------------------------------------------
@@ -123,35 +119,33 @@ public class ApplicationResource {
      * POST /api/v1/applications/{applicationId}/cam/initiate
      * PP7.8: Initiate CAM workflow (parallel to KYC).
      */
-    @POST
-    @Path("/applications/{applicationId}/cam/initiate")
+    @PostMapping("/applications/{applicationId}/cam/initiate")
     @Operation(summary = "Initiate CAM workflow (PP7.8)")
-    public Response initiateCam(
-        @PathParam("applicationId") String applicationId,
-        InitiateCamRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<CamWorkflow> initiateCam(
+        @PathVariable("applicationId") String applicationId,
+        @RequestBody InitiateCamRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         CamWorkflow cam = camWorkflowService.initiateCam(applicationId, req, userId);
-        return Response.ok(cam).build();
+        return ResponseEntity.ok(cam);
     }
 
     /**
      * POST /api/v1/applications/{applicationId}/cam/decision
      * PP7.8: Record CAM approval or decline decision (with optional sanction ID).
      */
-    @POST
-    @Path("/applications/{applicationId}/cam/decision")
+    @PostMapping("/applications/{applicationId}/cam/decision")
     @Operation(summary = "Record CAM approval/decline decision (PP7.8)")
-    public Response camDecision(
-        @PathParam("applicationId") String applicationId,
-        Map<String, String> body,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<CamWorkflow> camDecision(
+        @PathVariable("applicationId") String applicationId,
+        @RequestBody Map<String, String> body,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         String decision        = body.getOrDefault("decision", "");
         String sanctionId      = body.get("sanctionId");
@@ -161,24 +155,23 @@ public class ApplicationResource {
 
         CamWorkflow cam = camWorkflowService.processDecision(
             applicationId, decision, sanctionId, sanctionPackage, declineReason, decidedBy);
-        return Response.ok(cam).build();
+        return ResponseEntity.ok(cam);
     }
 
     /**
      * GET /api/v1/applications/{applicationId}/cam
      * PP7.8: Get CAM workflow status for an Application.
      */
-    @GET
-    @Path("/applications/{applicationId}/cam")
+    @GetMapping("/applications/{applicationId}/cam")
     @Operation(summary = "Get CAM workflow status (PP7.8)")
-    public Response getCam(
-        @PathParam("applicationId") String applicationId,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<CamWorkflow> getCam(
+        @PathVariable("applicationId") String applicationId,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(401).build();
         }
         CamWorkflow cam = camWorkflowService.getByApplicationId(applicationId);
-        return Response.ok(cam).build();
+        return ResponseEntity.ok(cam);
     }
 }

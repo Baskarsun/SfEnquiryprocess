@@ -5,26 +5,31 @@ import com.sf.leasing.lead.api.dto.request.TriggerKycValidationRequest;
 import com.sf.leasing.lead.api.dto.response.ProspectResponse;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.domain.model.ProspectKycValidation;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectKycValidationRepository;
 import com.sf.leasing.lead.service.ProspectValidationService;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
 
-@Path("/api/v1/prospects/{prospectId}/kyc")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/prospects/{prospectId}/kyc")
 @Tag(name = "ProspectKYC", description = "PP3: External KYC validation and override")
 public class ProspectValidationResource {
 
-    @Inject
-    ProspectValidationService validationService;
+    private final ProspectValidationService validationService;
+    private final ProspectKycValidationRepository prospectKycValidationRepository;
+
+    public ProspectValidationResource(ProspectValidationService validationService,
+                                      ProspectKycValidationRepository prospectKycValidationRepository) {
+        this.validationService = validationService;
+        this.prospectKycValidationRepository = prospectKycValidationRepository;
+    }
 
     /**
      * POST /api/v1/prospects/{prospectId}/kyc/validate
@@ -32,21 +37,20 @@ public class ProspectValidationResource {
      * On success → Prospect ID generated, status → VALIDATED.
      * On failure → exception queue with 24-hr SLA.
      */
-    @POST
-    @Path("/validate")
+    @PostMapping("/validate")
     @Operation(summary = "Trigger KYC validation for PAN or GSTIN (PP3)")
-    public Response triggerValidation(
-        @PathParam("prospectId") UUID prospectId,
-        @Valid TriggerKycValidationRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> triggerValidation(
+        @PathVariable("prospectId") UUID prospectId,
+        @Valid @RequestBody TriggerKycValidationRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
         Prospect updated = validationService.triggerValidation(
             prospectId, req.validationType, req.triggeredBy);
-        return Response.ok(ProspectResponse.from(updated)).build();
+        return ResponseEntity.ok(ProspectResponse.from(updated));
     }
 
     /**
@@ -54,41 +58,39 @@ public class ProspectValidationResource {
      * PP3.2: Manual override by authorised officer when external validation is inconclusive.
      * Override reason and officer ID are mandatory audit fields.
      */
-    @POST
-    @Path("/override")
+    @PostMapping("/override")
     @Operation(summary = "Manual KYC override by authorised officer (PP3)")
-    public Response overrideValidation(
-        @PathParam("prospectId") UUID prospectId,
-        @Valid OverrideKycValidationRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> overrideValidation(
+        @PathVariable("prospectId") UUID prospectId,
+        @Valid @RequestBody OverrideKycValidationRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
         Prospect updated = validationService.override(
             prospectId, req.validationType,
             req.overrideReasonCode, req.overrideReasonText,
             req.overrideBy != null ? req.overrideBy : userId);
-        return Response.ok(ProspectResponse.from(updated)).build();
+        return ResponseEntity.ok(ProspectResponse.from(updated));
     }
 
     /**
      * GET /api/v1/prospects/{prospectId}/kyc/history
      * Returns all KYC validation attempts (immutable audit log).
      */
-    @GET
-    @Path("/history")
+    @GetMapping("/history")
     @Operation(summary = "Get KYC validation history for a prospect (PP3)")
-    public Response getKycHistory(
-        @PathParam("prospectId") UUID prospectId,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> getKycHistory(
+        @PathVariable("prospectId") UUID prospectId,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        List<ProspectKycValidation> history = ProspectKycValidation.findByProspectId(prospectId);
-        return Response.ok(history).build();
+        List<ProspectKycValidation> history = prospectKycValidationRepository.findByProspectId(prospectId);
+        return ResponseEntity.ok(history);
     }
 }

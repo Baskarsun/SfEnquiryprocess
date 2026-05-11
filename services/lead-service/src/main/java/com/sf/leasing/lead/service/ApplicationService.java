@@ -16,11 +16,17 @@ import com.sf.leasing.lead.domain.model.Quote;
 import com.sf.leasing.lead.infrastructure.adapter.DmsAdapter;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicationDocumentRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicationRepository;
+import com.sf.leasing.lead.infrastructure.persistence.CamWorkflowRepository;
+import com.sf.leasing.lead.infrastructure.persistence.OpportunityRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import com.sf.leasing.lead.infrastructure.persistence.QuoteRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Base64;
@@ -48,10 +54,10 @@ import java.util.stream.Collectors;
  *   PP7.12 — Welcome communication for eligible lease types on reaching
  *             ELIGIBLE_FOR_APPLICATION.
  */
-@ApplicationScoped
+@Service
 public class ApplicationService {
 
-    private static final Logger LOG = Logger.getLogger(ApplicationService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ApplicationService.class);
 
     private static final Set<String> VALID_DOCUMENT_TYPES = Set.of(
         "PHOTO", "DRIVING_LICENCE", "PAN", "PASSPORT", "OTHER_KYC"
@@ -60,29 +66,50 @@ public class ApplicationService {
     private static final Set<String> MANDATORY_INDIVIDUAL_DOCS = Set.of("PHOTO", "PAN");
     private static final Set<String> MANDATORY_COMMERCIAL_DOCS = Set.of("PAN");
 
-    @Inject
-    QuoteService quoteService;
+    private final QuoteService quoteService;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final DmsAdapter dmsAdapter;
+    private final FraudScreeningService fraudScreeningService;
+    private final NotificationService notificationService;
+    private final LeadEventProducer eventProducer;
+    private final ApplicationRepository applicationRepository;
+    private final ApplicationDocumentRepository applicationDocumentRepository;
+    private final CamWorkflowRepository camWorkflowRepository;
+    private final ProspectRepository prospectRepository;
+    private final OpportunityRepository opportunityRepository;
+    private final QuoteRepository quoteRepository;
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
-
-    @Inject
-    DmsAdapter dmsAdapter;
-
-    @Inject
-    FraudScreeningService fraudScreeningService;
-
-    @Inject
-    NotificationService notificationService;
-
-    @Inject
-    LeadEventProducer eventProducer;
-
-    @ConfigProperty(name = "application.sanction-validity-days", defaultValue = "180")
+    @Value("${application.sanction-validity-days:180}")
     int sanctionValidityDays;
 
-    @ConfigProperty(name = "application.eligible-lease-types", defaultValue = "FINANCE_LEASE,OPERATING_LEASE")
+    @Value("${application.eligible-lease-types:FINANCE_LEASE,OPERATING_LEASE}")
     String eligibleLeaseTypes;
+
+    public ApplicationService(QuoteService quoteService,
+                               RedisSequenceGenerator sequenceGenerator,
+                               DmsAdapter dmsAdapter,
+                               FraudScreeningService fraudScreeningService,
+                               NotificationService notificationService,
+                               LeadEventProducer eventProducer,
+                               ApplicationRepository applicationRepository,
+                               ApplicationDocumentRepository applicationDocumentRepository,
+                               CamWorkflowRepository camWorkflowRepository,
+                               ProspectRepository prospectRepository,
+                               OpportunityRepository opportunityRepository,
+                               QuoteRepository quoteRepository) {
+        this.quoteService = quoteService;
+        this.sequenceGenerator = sequenceGenerator;
+        this.dmsAdapter = dmsAdapter;
+        this.fraudScreeningService = fraudScreeningService;
+        this.notificationService = notificationService;
+        this.eventProducer = eventProducer;
+        this.applicationRepository = applicationRepository;
+        this.applicationDocumentRepository = applicationDocumentRepository;
+        this.camWorkflowRepository = camWorkflowRepository;
+        this.prospectRepository = prospectRepository;
+        this.opportunityRepository = opportunityRepository;
+        this.quoteRepository = quoteRepository;
+    }
 
     // -------------------------------------------------------
     // PP7.1: Initiate Application
@@ -94,7 +121,7 @@ public class ApplicationService {
                                                     String userId) {
         Prospect prospect = resolveProspect(prospectId);
         Quote    quote    = quoteService.resolveQuoteEntity(req.quoteId);
-        Opportunity opp   = Opportunity.findById(quote.opportunityId);
+        Opportunity opp   = opportunityRepository.findById(quote.opportunityId).orElse(null);
 
         // Quote must be LOCKED before application can be initiated
         if (!quote.isLocked()) {
@@ -106,7 +133,7 @@ public class ApplicationService {
         validateNoModificationBlock(prospect);
 
         // Check no existing active application for this quote
-        Application existing = Application.findByQuote(quote.id);
+        Application existing = applicationRepository.findByQuoteId(quote.id).orElse(null);
         if (existing != null && existing.status != ApplicationStatus.CLOSED) {
             throw new BusinessException(ErrorCodes.APPLICATION_ALREADY_EXISTS,
                 "An active application already exists for this quote.");
@@ -129,11 +156,11 @@ public class ApplicationService {
         app.camStatus            = CamStatus.NOT_STARTED;
         app.createdBy            = req.createdBy != null ? req.createdBy : userId;
         app.createdAt            = LocalDateTime.now();
-        app.persist();
+        applicationRepository.save(app);
 
         // PP7.7: Non-individual → auto-advance to ELIGIBLE_FOR_APPLICATION
         if (!individual) {
-            LOG.infof("PP7.7 non-individual auto-eligibility: APP=%s", appId);
+            LOG.info("PP7.7 non-individual auto-eligibility: APP={}", appId);
             app.fraudStatus             = "CLEAR";
             app.eligibleForApplication  = true;
             app.status                  = ApplicationStatus.ELIGIBLE_FOR_APPLICATION;
@@ -145,10 +172,10 @@ public class ApplicationService {
         cam.applicationId    = app.id;
         cam.camStatus        = CamStatus.NOT_STARTED;
         cam.createdAt        = LocalDateTime.now();
-        cam.persist();
+        camWorkflowRepository.save(cam);
 
         eventProducer.publishApplicationInitiated(appId, prospect.prospectId, opp != null ? opp.opportunityId : null, userId);
-        LOG.infof("Application initiated: APP=%s Prospect=%s by=%s", appId, prospectId, userId);
+        LOG.info("Application initiated: APP={} Prospect={} by={}", appId, prospectId, userId);
 
         // PP7.10: trigger async fraud screening post-save (individual only, or if non-individual skipped above)
         if (individual) {
@@ -212,7 +239,7 @@ public class ApplicationService {
         doc.uploadStatus       = "UPLOADED";
         doc.uploadedAt         = LocalDateTime.now();
         doc.uploadedBy         = uploadedBy;
-        doc.persist();
+        applicationDocumentRepository.save(doc);
 
         // PP7.11: post-save caution screening (re-run on each document upload)
         boolean cautionOk = fraudScreeningService.runCautionScreening(app);
@@ -238,7 +265,7 @@ public class ApplicationService {
 
     public List<ApplicationResponse> listByProspect(String prospectId) {
         Prospect prospect = resolveProspect(prospectId);
-        return Application.findByProspect(prospect.id)
+        return applicationRepository.findByProspectUuid(prospect.id)
             .stream()
             .map(this::buildResponse)
             .collect(Collectors.toList());
@@ -273,7 +300,7 @@ public class ApplicationService {
     // -------------------------------------------------------
 
     private void updateKycStatus(Application app, String userId) {
-        List<ApplicationDocument> docs = ApplicationDocument.findByApplication(app.id);
+        List<ApplicationDocument> docs = applicationDocumentRepository.findByApplicationId(app.id);
         Set<String> uploadedTypes = docs.stream()
             .map(d -> d.documentType)
             .collect(Collectors.toSet());
@@ -281,7 +308,6 @@ public class ApplicationService {
         Set<String> mandatory = app.individual ? MANDATORY_INDIVIDUAL_DOCS : MANDATORY_COMMERCIAL_DOCS;
         boolean kycComplete = uploadedTypes.containsAll(mandatory);
 
-        String prevKycStatus = app.kycStatus;
         app.kycStatus = kycComplete ? "COMPLETE" : "IN_PROGRESS";
 
         // PP7.12: welcome communication on transition to ELIGIBLE_FOR_APPLICATION
@@ -303,10 +329,10 @@ public class ApplicationService {
             try {
                 notificationService.dispatchWelcomeCommunication(app.applicationId, app.prospectBusinessId, app.leaseType);
                 app.welcomeCommSent = true;
-                LOG.infof("PP7.12 welcome communication dispatched: APP=%s leaseType=%s",
+                LOG.info("PP7.12 welcome communication dispatched: APP={} leaseType={}",
                     app.applicationId, app.leaseType);
             } catch (Exception e) {
-                LOG.warnf("PP7.12 welcome communication failed for APP=%s (suppressed): %s",
+                LOG.warn("PP7.12 welcome communication failed for APP={} (suppressed): {}",
                     app.applicationId, e.getMessage());
             }
         }
@@ -321,7 +347,7 @@ public class ApplicationService {
 
     private void validateNoModificationBlock(Prospect prospect) {
         // PP7.8a: block if any application for this prospect has a non-final CAM
-        List<Application> apps = Application.findByProspect(prospect.id);
+        List<Application> apps = applicationRepository.findByProspectUuid(prospect.id);
         for (Application a : apps) {
             if (a.camStatus == CamStatus.IN_PROGRESS) {
                 throw new BusinessException(ErrorCodes.MODIFICATION_CONTRACT_IN_PROGRESS,
@@ -337,7 +363,7 @@ public class ApplicationService {
         try {
             fraudScreeningService.runPostSaveScreening(applicationId);
         } catch (Exception e) {
-            LOG.warnf("ApplicationService: fraud screening dispatch failed for APP=%s (suppressed): %s",
+            LOG.warn("ApplicationService: fraud screening dispatch failed for APP={} (suppressed): {}",
                 applicationId, e.getMessage());
         }
     }
@@ -353,10 +379,10 @@ public class ApplicationService {
     }
 
     private Application resolveApplication(String applicationId) {
-        Application app = Application.findByApplicationId(applicationId);
+        Application app = applicationRepository.findByApplicationId(applicationId).orElse(null);
         if (app == null) {
             try {
-                app = Application.findById(UUID.fromString(applicationId));
+                app = applicationRepository.findById(UUID.fromString(applicationId)).orElse(null);
             } catch (IllegalArgumentException ignored) {}
         }
         if (app == null) {
@@ -366,9 +392,9 @@ public class ApplicationService {
     }
 
     private Prospect resolveProspect(String id) {
-        Prospect p = id.startsWith("PR-") ? Prospect.findByProspectId(id) : null;
+        Prospect p = id.startsWith("PR-") ? prospectRepository.findByProspectId(id).orElse(null) : null;
         if (p == null) {
-            try { p = Prospect.findById(UUID.fromString(id)); } catch (IllegalArgumentException ignored) {}
+            try { p = prospectRepository.findById(UUID.fromString(id)).orElse(null); } catch (IllegalArgumentException ignored) {}
         }
         if (p == null) {
             throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + id);
@@ -380,7 +406,7 @@ public class ApplicationService {
     }
 
     private ApplicationResponse buildResponse(Application app) {
-        app.documents = ApplicationDocument.findByApplication(app.id);
+        app.documents = applicationDocumentRepository.findByApplicationId(app.id);
         return ApplicationResponse.from(app);
     }
 }

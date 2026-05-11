@@ -1,7 +1,6 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.CamStatus;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -9,7 +8,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "cam_workflows")
-public class CamWorkflow extends PanacheEntityBase {
+public class CamWorkflow {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -52,7 +51,5 @@ public class CamWorkflow extends PanacheEntityBase {
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
 
-    public static CamWorkflow findByApplication(UUID applicationId) {
-        return find("applicationId", applicationId).firstResult();
-    }
+
 }

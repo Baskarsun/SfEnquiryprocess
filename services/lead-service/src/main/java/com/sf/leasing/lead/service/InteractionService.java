@@ -6,42 +6,45 @@ import com.sf.leasing.lead.domain.enums.LeadStatus;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.model.Interaction;
 import com.sf.leasing.lead.domain.model.Lead;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.InteractionRepository;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
 /**
  * Implements LP6: Interaction Logging & Next Action Scheduling.
  */
-@ApplicationScoped
+@Service
 public class InteractionService {
 
-    private static final Logger LOG = Logger.getLogger(InteractionService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(InteractionService.class);
 
-    @Inject
-    EntityManager em;
+    private final LeadRepository leadRepository;
+    private final InteractionRepository interactionRepository;
+    private final NotificationService notificationService;
 
-    @Inject
-    NotificationService notificationService;
+    public InteractionService(LeadRepository leadRepository,
+                               InteractionRepository interactionRepository,
+                               NotificationService notificationService) {
+        this.leadRepository = leadRepository;
+        this.interactionRepository = interactionRepository;
+        this.notificationService = notificationService;
+    }
 
     @Transactional
     public Interaction logInteraction(String lrn, LogInteractionRequest req, String userId) {
 
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) {
-            throw new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn);
-        }
+        Lead lead = leadRepository.findByLrn(lrn)
+            .orElseThrow(() -> new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn));
 
-        // Interaction logging is not permitted on closed leads (Rule LP6.3 / LP7.4)
         if (lead.isClosed()) {
             throw new BusinessException("LEAD_CLOSED", "Interaction logging is not permitted on a closed lead.");
         }
 
-        // Rule LP6.1: Interaction type and timestamp are mandatory
         if (req.interactionType == null) {
             throw new BusinessException("INTERACTION_TYPE_REQUIRED", "Interaction type is mandatory.");
         }
@@ -52,7 +55,6 @@ public class InteractionService {
             throw new BusinessException("OUTCOME_NOTES_REQUIRED", "Outcome notes are mandatory.");
         }
 
-        // Rule LP6.2: For In-Progress leads, next action scheduling is mandatory before exit
         if (lead.status == LeadStatus.IN_PROGRESS) {
             if (req.nextActionDate == null || isBlank(req.nextActionMode)) {
                 throw new BusinessException("NEXT_ACTION_REQUIRED",
@@ -60,7 +62,6 @@ public class InteractionService {
             }
         }
 
-        // Create immutable interaction record
         Interaction interaction = new Interaction();
         interaction.lead                 = lead;
         interaction.interactionType      = req.interactionType;
@@ -75,22 +76,19 @@ public class InteractionService {
         interaction.reminderFlag         = req.reminderFlag;
         interaction.createdBy            = userId;
         interaction.createdAt            = LocalDateTime.now();
-        interaction.persist();
+        interactionRepository.save(interaction);
 
-        // Rule LP6.5: Increment attempt counters
         incrementAttemptCounter(lead, req.interactionType);
 
-        // Transition lead status from ASSIGNED → IN_PROGRESS on first interaction
         if (lead.status == LeadStatus.ASSIGNED) {
             lead.status    = LeadStatus.IN_PROGRESS;
             lead.updatedBy = userId;
             lead.updatedAt = LocalDateTime.now();
         }
 
-        // Rule LP6.4: Dispatch SMS asynchronously — failure never blocks the transaction
         notificationService.dispatchSmsAsync(lead.lrn, userId);
 
-        LOG.infof("Interaction logged for LRN=%s by user=%s type=%s", lrn, userId, req.interactionType);
+        LOG.info("Interaction logged for LRN={} by user={} type={}", lrn, userId, req.interactionType);
         return interaction;
     }
 
@@ -99,7 +97,7 @@ public class InteractionService {
             case PHONE_CALL  -> lead.callAttempts++;
             case EMAIL       -> lead.emailAttempts++;
             case WHATSAPP    -> lead.messageAttempts++;
-            default          -> {} // IN_PERSON_MEETING, VIDEO_CALL: no counter
+            default          -> {}
         }
         lead.updatedAt = LocalDateTime.now();
     }

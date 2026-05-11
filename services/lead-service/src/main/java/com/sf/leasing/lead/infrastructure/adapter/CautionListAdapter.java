@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * Adapter for the external Caution List service (LP4.3).
@@ -10,12 +11,12 @@ import org.jboss.logging.Logger;
  * Rule: PAN on caution list → error LN5337 (hard block).
  * Production wiring: replace stubMode=false and set caution-list.base-url to the real endpoint.
  */
-@ApplicationScoped
+@Component
 public class CautionListAdapter {
 
-    private static final Logger LOG = Logger.getLogger(CautionListAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CautionListAdapter.class);
 
-    @ConfigProperty(name = "adapters.caution-list.stub-mode", defaultValue = "true")
+    @Value("${adapters.caution-list.stub-mode:true}")
     boolean stubMode;
 
     public enum CautionStatus {
@@ -31,11 +32,11 @@ public class CautionListAdapter {
      */
     public CautionStatus checkPan(String pan) {
         if (stubMode) {
-            LOG.debugf("Caution list [STUB]: PAN=%s → ALLOWED", pan);
+            LOG.debug("Caution list [STUB]: PAN={} → ALLOWED", pan);
             return CautionStatus.ALLOWED;
         }
         // TODO: wire to real caution list REST endpoint
-        LOG.warnf("Caution list adapter is not configured. Returning UNKNOWN for PAN=%s", pan);
+        LOG.warn("Caution list adapter is not configured. Returning UNKNOWN for PAN={}", pan);
         return CautionStatus.UNKNOWN;
     }
 }

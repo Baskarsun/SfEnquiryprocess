@@ -1,7 +1,6 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.*;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -9,7 +8,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "leads")
-public class Lead extends PanacheEntityBase {
+public class Lead {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -144,15 +143,6 @@ public class Lead extends PanacheEntityBase {
     @OneToMany(mappedBy = "lead", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @OrderBy("interaction_timestamp ASC")
     public List<Interaction> interactions;
-
-    // Finder methods
-    public static Lead findByLrn(String lrn) {
-        return find("lrn", lrn).firstResult();
-    }
-
-    public static Lead findByTempCustomerNumber(String tcn) {
-        return find("tempCustomerNumber", tcn).firstResult();
-    }
 
     public boolean isClosed() {
         return status == LeadStatus.CLOSED;

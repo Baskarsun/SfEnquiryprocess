@@ -2,6 +2,7 @@ package com.sf.leasing.lead.service;
 
 import com.sf.leasing.lead.api.dto.response.CustomerResponse;
 import com.sf.leasing.lead.domain.enums.CamStatus;
+import com.sf.leasing.lead.domain.enums.OpportunityStatus;
 import com.sf.leasing.lead.domain.enums.ProspectStatus;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.exception.ErrorCodes;
@@ -9,16 +10,21 @@ import com.sf.leasing.lead.domain.model.Application;
 import com.sf.leasing.lead.domain.model.Customer;
 import com.sf.leasing.lead.domain.model.DownstreamEventLog;
 import com.sf.leasing.lead.domain.model.Lineage;
-import com.sf.leasing.lead.domain.enums.OpportunityStatus;
 import com.sf.leasing.lead.domain.model.Opportunity;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicationRepository;
+import com.sf.leasing.lead.infrastructure.persistence.CustomerRepository;
+import com.sf.leasing.lead.infrastructure.persistence.DownstreamEventLogRepository;
+import com.sf.leasing.lead.infrastructure.persistence.LineageRepository;
+import com.sf.leasing.lead.infrastructure.persistence.OpportunityRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,25 +40,43 @@ import java.util.UUID;
  *   PP8.4: CustomerCreated Kafka event published to downstream systems.
  *          LmsUpdated event dispatched for Lead Management System sync (LP8.9).
  */
-@ApplicationScoped
+@Service
 public class CustomerCreationService {
 
-    private static final Logger LOG = Logger.getLogger(CustomerCreationService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CustomerCreationService.class);
 
     private static final List<String> VALID_STATUSES_FOR_CREATION =
         List.of("ACTIVE", "IN_APPRAISAL");
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final LeadEventProducer eventProducer;
+    private final NotificationService notificationService;
+    private final ApplicationRepository applicationRepository;
+    private final ProspectRepository prospectRepository;
+    private final CustomerRepository customerRepository;
+    private final LineageRepository lineageRepository;
+    private final OpportunityRepository opportunityRepository;
+    private final DownstreamEventLogRepository downstreamEventLogRepository;
 
-    @Inject
-    LeadEventProducer eventProducer;
-
-    @Inject
-    NotificationService notificationService;
-
-    @Inject
-    EntityManager em;
+    public CustomerCreationService(RedisSequenceGenerator sequenceGenerator,
+                                    LeadEventProducer eventProducer,
+                                    NotificationService notificationService,
+                                    ApplicationRepository applicationRepository,
+                                    ProspectRepository prospectRepository,
+                                    CustomerRepository customerRepository,
+                                    LineageRepository lineageRepository,
+                                    OpportunityRepository opportunityRepository,
+                                    DownstreamEventLogRepository downstreamEventLogRepository) {
+        this.sequenceGenerator = sequenceGenerator;
+        this.eventProducer = eventProducer;
+        this.notificationService = notificationService;
+        this.applicationRepository = applicationRepository;
+        this.prospectRepository = prospectRepository;
+        this.customerRepository = customerRepository;
+        this.lineageRepository = lineageRepository;
+        this.opportunityRepository = opportunityRepository;
+        this.downstreamEventLogRepository = downstreamEventLogRepository;
+    }
 
     // -------------------------------------------------------
     // PP8.1: Create enterprise customer
@@ -62,21 +86,17 @@ public class CustomerCreationService {
     public Customer createCustomer(String applicationId, String operatorId) {
 
         // 1. Resolve application
-        Application app = Application.findByApplicationId(applicationId);
-        if (app == null) {
-            throw new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
-                "Application not found: " + applicationId);
-        }
+        Application app = applicationRepository.findByApplicationId(applicationId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
+                "Application not found: " + applicationId));
 
         // 2. Resolve prospect
-        Prospect prospect = Prospect.find("id", app.prospectUuid).firstResult();
-        if (prospect == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND,
-                "Prospect not found for application: " + applicationId);
-        }
+        Prospect prospect = prospectRepository.findById(app.prospectUuid)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND,
+                "Prospect not found for application: " + applicationId));
 
         // 3. Guard: customer must not already exist for this prospect
-        Customer existing = Customer.findByProspectUuid(prospect.id);
+        Customer existing = customerRepository.findByProspectUuid(prospect.id).orElse(null);
         if (existing != null) {
             throw new BusinessException(ErrorCodes.CUSTOMER_ALREADY_EXISTS,
                 "Customer already created for prospect: " + prospect.prospectId);
@@ -87,7 +107,7 @@ public class CustomerCreationService {
         boolean camApproved  = app.camStatus == CamStatus.APPROVED;
 
         if (!kycComplete && !camApproved) {
-            CustomerResponse.GateStatus gs = buildGateStatus(kycComplete, camApproved);
+            buildGateStatus(kycComplete, camApproved);
             throw new BusinessException(ErrorCodes.CUSTOMER_GATE_KYC_INCOMPLETE,
                 "Customer gate not satisfied: KYC=" + app.kycStatus + ", CAM=" + app.camStatus);
         }
@@ -125,7 +145,7 @@ public class CustomerCreationService {
         customer.status              = "ACTIVE";
         customer.createdBy           = operatorId;
         customer.createdAt           = now;
-        customer.persist();
+        customerRepository.save(customer);
 
         // 7. Advance prospect status to CUSTOMER_CREATED
         prospect.status    = ProspectStatus.CUSTOMER_CREATED;
@@ -141,7 +161,7 @@ public class CustomerCreationService {
         // 10. Publish downstream events (non-blocking)
         publishDownstreamEvents(customer, prospect, app);
 
-        LOG.infof("Customer created: CUST=%s for PROSPECT=%s APP=%s by=%s",
+        LOG.info("Customer created: CUST={} for PROSPECT={} APP={} by={}",
             customerId, prospect.prospectId, applicationId, operatorId);
 
         return customer;
@@ -152,11 +172,9 @@ public class CustomerCreationService {
     // -------------------------------------------------------
 
     public CustomerResponse.GateStatus getGateStatus(String applicationId) {
-        Application app = Application.findByApplicationId(applicationId);
-        if (app == null) {
-            throw new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
-                "Application not found: " + applicationId);
-        }
+        Application app = applicationRepository.findByApplicationId(applicationId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
+                "Application not found: " + applicationId));
         boolean kycComplete = "COMPLETE".equalsIgnoreCase(app.kycStatus);
         boolean camApproved = app.camStatus == CamStatus.APPROVED;
         return buildGateStatus(kycComplete, camApproved);
@@ -167,26 +185,18 @@ public class CustomerCreationService {
     // -------------------------------------------------------
 
     public Customer getByCustomerId(String customerId) {
-        Customer c = Customer.findByCustomerId(customerId);
-        if (c == null) {
-            throw new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
-                "Customer not found: " + customerId);
-        }
-        return c;
+        return customerRepository.findByCustomerId(customerId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
+                "Customer not found: " + customerId));
     }
 
     public Customer getByProspectId(String prospectBusinessId) {
-        Prospect p = Prospect.findByProspectId(prospectBusinessId);
-        if (p == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND,
-                "Prospect not found: " + prospectBusinessId);
-        }
-        Customer c = Customer.findByProspectUuid(p.id);
-        if (c == null) {
-            throw new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
-                "No customer created yet for prospect: " + prospectBusinessId);
-        }
-        return c;
+        Prospect p = prospectRepository.findByProspectId(prospectBusinessId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND,
+                "Prospect not found: " + prospectBusinessId));
+        return customerRepository.findByProspectUuid(p.id)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
+                "No customer created yet for prospect: " + prospectBusinessId));
     }
 
     // -------------------------------------------------------
@@ -195,9 +205,9 @@ public class CustomerCreationService {
 
     private void updateLineageOnCustomerCreation(Prospect prospect, Application app,
                                                   Customer customer, LocalDateTime now) {
-        Lineage lineage = Lineage.findByProspectUuid(prospect.id);
+        Lineage lineage = lineageRepository.findByProspectUuid(prospect.id).orElse(null);
         if (lineage == null) {
-            LOG.warnf("Lineage record not found for prospect=%s; cannot update chain.", prospect.id);
+            LOG.warn("Lineage record not found for prospect={}; cannot update chain.", prospect.id);
             return;
         }
         lineage.customerUuid    = customer.id;
@@ -207,10 +217,9 @@ public class CustomerCreationService {
         lineage.updatedAt       = now;
     }
 
-    @SuppressWarnings("unchecked")
     private void markOpportunitiesWon(UUID prospectUuid, String customerId,
                                        LocalDateTime now, String operatorId) {
-        List<Opportunity> opps = Opportunity.list("prospectUuid", prospectUuid);
+        List<Opportunity> opps = opportunityRepository.findByProspectUuid(prospectUuid);
         for (Opportunity opp : opps) {
             if (opp.status == OpportunityStatus.OPEN || opp.status == OpportunityStatus.SANCTIONED) {
                 opp.status    = OpportunityStatus.WON;
@@ -236,7 +245,7 @@ public class CustomerCreationService {
             logDownstreamEvent("CustomerCreated", "CUSTOMER", customer.customerId,
                 "leasing.customer.events");
         } catch (Exception e) {
-            LOG.warnf("CustomerCreated event publish failed (suppressed): %s", e.getMessage());
+            LOG.warn("CustomerCreated event publish failed (suppressed): {}", e.getMessage());
             logDownstreamEventFailed("CustomerCreated", "CUSTOMER", customer.customerId, e.getMessage());
         }
 
@@ -250,13 +259,13 @@ public class CustomerCreationService {
             logDownstreamEvent("LmsUpdated", "CUSTOMER", customer.customerId,
                 "leasing.lms.updates");
         } catch (Exception e) {
-            LOG.warnf("LmsUpdated event publish failed (suppressed): %s", e.getMessage());
+            LOG.warn("LmsUpdated event publish failed (suppressed): {}", e.getMessage());
             logDownstreamEventFailed("LmsUpdated", "CUSTOMER", customer.customerId, e.getMessage());
         }
     }
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
-    void logDownstreamEvent(String eventType, String entityType, String entityId, String topic) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logDownstreamEvent(String eventType, String entityType, String entityId, String topic) {
         DownstreamEventLog log = new DownstreamEventLog();
         log.eventType   = eventType;
         log.entityType  = entityType;
@@ -264,11 +273,11 @@ public class CustomerCreationService {
         log.topic       = topic;
         log.status      = "PUBLISHED";
         log.publishedAt = LocalDateTime.now();
-        log.persist();
+        downstreamEventLogRepository.save(log);
     }
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
-    void logDownstreamEventFailed(String eventType, String entityType, String entityId, String error) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logDownstreamEventFailed(String eventType, String entityType, String entityId, String error) {
         DownstreamEventLog log = new DownstreamEventLog();
         log.eventType    = eventType;
         log.entityType   = entityType;
@@ -276,7 +285,7 @@ public class CustomerCreationService {
         log.status       = "FAILED";
         log.errorMessage = error;
         log.publishedAt  = LocalDateTime.now();
-        log.persist();
+        downstreamEventLogRepository.save(log);
     }
 
     private CustomerResponse.GateStatus buildGateStatus(boolean kycComplete, boolean camApproved) {

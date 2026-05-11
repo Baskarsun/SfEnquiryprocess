@@ -1,6 +1,5 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -12,7 +11,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "lineage")
-public class Lineage extends PanacheEntityBase {
+public class Lineage {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -60,20 +59,4 @@ public class Lineage extends PanacheEntityBase {
 
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
-
-    public static Lineage findByLeadLrn(String leadLrn) {
-        return find("leadLrn", leadLrn).firstResult();
-    }
-
-    public static Lineage findByProspectUuid(UUID prospectUuid) {
-        return find("prospectUuid", prospectUuid).firstResult();
-    }
-
-    public static Lineage findByCustomerUuid(UUID customerUuid) {
-        return find("customerUuid", customerUuid).firstResult();
-    }
-
-    public static Lineage findByApplicationUuid(UUID applicationUuid) {
-        return find("applicationUuid", applicationUuid).firstResult();
-    }
 }

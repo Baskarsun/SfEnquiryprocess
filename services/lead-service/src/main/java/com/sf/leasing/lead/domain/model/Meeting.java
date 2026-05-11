@@ -1,14 +1,12 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "meetings")
-public class Meeting extends PanacheEntityBase {
+public class Meeting {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -51,7 +49,5 @@ public class Meeting extends PanacheEntityBase {
     @Column(name = "created_at", nullable = false)
     public LocalDateTime createdAt = LocalDateTime.now();
 
-    public static List<Meeting> findByProspectId(UUID prospectId) {
-        return find("prospect.id", prospectId).list();
-    }
+
 }

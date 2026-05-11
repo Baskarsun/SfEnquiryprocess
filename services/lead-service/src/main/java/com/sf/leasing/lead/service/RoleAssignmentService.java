@@ -6,9 +6,12 @@ import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Customer;
 import com.sf.leasing.lead.domain.model.CustomerRoleAssignment;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.CustomerRepository;
+import com.sf.leasing.lead.infrastructure.persistence.CustomerRoleAssignmentRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -24,14 +27,23 @@ import java.util.stream.Collectors;
  *   - Duplicate role assignment for same customer is rejected
  *   - All assignment decisions are immutably audited (operator + timestamp)
  */
-@ApplicationScoped
+@Service
 public class RoleAssignmentService {
 
-    private static final Logger LOG = Logger.getLogger(RoleAssignmentService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RoleAssignmentService.class);
 
     private static final Set<String> VALID_ROLES = Set.of(
         "LESSEE_INDIVIDUAL", "LESSEE_CORPORATE", "DEALER", "VENDOR", "DEPOSITOR"
     );
+
+    private final CustomerRepository customerRepository;
+    private final CustomerRoleAssignmentRepository customerRoleAssignmentRepository;
+
+    public RoleAssignmentService(CustomerRepository customerRepository,
+                                  CustomerRoleAssignmentRepository customerRoleAssignmentRepository) {
+        this.customerRepository = customerRepository;
+        this.customerRoleAssignmentRepository = customerRoleAssignmentRepository;
+    }
 
     // -------------------------------------------------------
     // PP8.3: Assign role
@@ -52,7 +64,7 @@ public class RoleAssignmentService {
 
         // Guard: no duplicate role assignment
         CustomerRoleAssignment existing =
-            CustomerRoleAssignment.findByCustomerAndRole(customer.id, normalised);
+            customerRoleAssignmentRepository.findByCustomerUuidAndRoleType(customer.id, normalised).orElse(null);
         if (existing != null) {
             throw new BusinessException(ErrorCodes.ROLE_ALREADY_ASSIGNED,
                 "Role " + normalised + " is already assigned to customer: " + customerId);
@@ -72,9 +84,9 @@ public class RoleAssignmentService {
         assignment.remarks          = req.remarks;
         assignment.assignedBy       = req.assignedBy != null ? req.assignedBy : "SYSTEM";
         assignment.assignedAt       = now;
-        assignment.persist();
+        customerRoleAssignmentRepository.save(assignment);
 
-        LOG.infof("Role assigned: CUST=%s ROLE=%s STATUS=%s by=%s",
+        LOG.info("Role assigned: CUST={} ROLE={} STATUS={} by={}",
             customerId, normalised, status, assignment.assignedBy);
         return assignment;
     }
@@ -90,11 +102,9 @@ public class RoleAssignmentService {
         String normalised = roleType != null ? roleType.toUpperCase() : "";
 
         CustomerRoleAssignment assignment =
-            CustomerRoleAssignment.findByCustomerAndRole(customer.id, normalised);
-        if (assignment == null) {
-            throw new BusinessException(ErrorCodes.ROLE_TYPE_INVALID,
-                "Role " + normalised + " is not assigned to customer: " + customerId);
-        }
+            customerRoleAssignmentRepository.findByCustomerUuidAndRoleType(customer.id, normalised)
+                .orElseThrow(() -> new BusinessException(ErrorCodes.ROLE_TYPE_INVALID,
+                    "Role " + normalised + " is not assigned to customer: " + customerId));
 
         assignment.checklistItems   = serialiseChecklist(checklistItems);
         assignment.checklistComplete = true;
@@ -102,7 +112,7 @@ public class RoleAssignmentService {
         assignment.updatedBy        = updatedBy;
         assignment.updatedAt        = LocalDateTime.now();
 
-        LOG.infof("Checklist completed: CUST=%s ROLE=%s by=%s", customerId, normalised, updatedBy);
+        LOG.info("Checklist completed: CUST={} ROLE={} by={}", customerId, normalised, updatedBy);
         return assignment;
     }
 
@@ -112,7 +122,7 @@ public class RoleAssignmentService {
 
     public List<RoleAssignmentResponse> getRoles(String customerId) {
         Customer customer = resolveCustomer(customerId);
-        return CustomerRoleAssignment.findByCustomerUuid(customer.id)
+        return customerRoleAssignmentRepository.findByCustomerUuid(customer.id)
             .stream()
             .map(RoleAssignmentResponse::from)
             .collect(Collectors.toList());
@@ -123,12 +133,9 @@ public class RoleAssignmentService {
     // -------------------------------------------------------
 
     private Customer resolveCustomer(String customerId) {
-        Customer c = Customer.findByCustomerId(customerId);
-        if (c == null) {
-            throw new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
-                "Customer not found: " + customerId);
-        }
-        return c;
+        return customerRepository.findByCustomerId(customerId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.CUSTOMER_NOT_FOUND,
+                "Customer not found: " + customerId));
     }
 
     private String serialiseChecklist(List<String> items) {

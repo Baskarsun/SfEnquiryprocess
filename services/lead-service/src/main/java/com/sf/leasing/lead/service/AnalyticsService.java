@@ -1,10 +1,11 @@
 package com.sf.leasing.lead.service;
 
 import com.sf.leasing.lead.api.dto.response.AnalyticsResponse;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,12 +26,12 @@ import java.util.List;
  *  10. Quote lock rate (%)
  *  11. CAM approval rate (%)
  */
-@ApplicationScoped
+@Service
 public class AnalyticsService {
 
-    private static final Logger LOG = Logger.getLogger(AnalyticsService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(AnalyticsService.class);
 
-    @Inject
+    @PersistenceContext
     EntityManager em;
 
     // -------------------------------------------------------
@@ -39,7 +40,7 @@ public class AnalyticsService {
 
     public AnalyticsResponse computeFullReport(String periodFrom, String periodTo,
                                                 String branchCode) {
-        LOG.infof("Computing full analytics: period=%s to %s branch=%s", periodFrom, periodTo, branchCode);
+        LOG.info("Computing full analytics: period={} to {} branch={}", periodFrom, periodTo, branchCode);
 
         AnalyticsResponse report = new AnalyticsResponse();
         report.reportName  = "FULL_KPI_REPORT";
@@ -151,7 +152,7 @@ public class AnalyticsService {
     }
 
     // -------------------------------------------------------
-    // KPI 4: Response rate (% leads with ≥ 1 positive lessee response)
+    // KPI 4: Response rate (% leads with >= 1 positive lessee response)
     // -------------------------------------------------------
 
     public Double computeResponseRate(String periodFrom, String periodTo, String branchCode) {

@@ -1,14 +1,12 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "prospect_kyc_validations")
-public class ProspectKycValidation extends PanacheEntityBase {
+public class ProspectKycValidation {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -57,7 +55,5 @@ public class ProspectKycValidation extends PanacheEntityBase {
     @Column(name = "override_at")
     public LocalDateTime overrideAt;
 
-    public static List<ProspectKycValidation> findByProspectId(UUID prospectId) {
-        return find("prospect.id", prospectId).list();
-    }
+
 }

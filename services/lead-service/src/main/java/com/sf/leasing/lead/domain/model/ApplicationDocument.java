@@ -1,15 +1,13 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "application_documents")
-public class ApplicationDocument extends PanacheEntityBase {
+public class ApplicationDocument {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -45,7 +43,5 @@ public class ApplicationDocument extends PanacheEntityBase {
     @Column(name = "uploaded_by", nullable = false, length = 50)
     public String uploadedBy;
 
-    public static List<ApplicationDocument> findByApplication(UUID applicationId) {
-        return list("applicationId", applicationId);
-    }
+
 }

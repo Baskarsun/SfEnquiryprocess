@@ -1,10 +1,11 @@
 package com.sf.leasing.lead.service;
 
 import com.sf.leasing.lead.api.dto.response.DashboardResponse;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,12 +13,12 @@ import java.util.List;
 /**
  * Phase 3 dashboards: Prospect Pipeline, Exception Queue, Lead→Prospect Conversion.
  */
-@ApplicationScoped
+@Service
 public class ProspectDashboardService {
 
-    private static final Logger LOG = Logger.getLogger(ProspectDashboardService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ProspectDashboardService.class);
 
-    @Inject
+    @PersistenceContext
     EntityManager em;
 
     /** Prospect Pipeline: count by status, optionally filtered by branch. */

@@ -10,13 +10,16 @@ import com.sf.leasing.lead.domain.enums.LeadType;
 import com.sf.leasing.lead.domain.enums.SourceCategory;
 import com.sf.leasing.lead.domain.model.BulkUploadJob;
 import com.sf.leasing.lead.domain.model.BulkUploadRow;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
+import com.sf.leasing.lead.infrastructure.persistence.BulkUploadJobRepository;
+import com.sf.leasing.lead.infrastructure.persistence.BulkUploadRowRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.InputStream;
 import java.time.LocalDateTime;
@@ -47,16 +50,25 @@ import java.util.List;
  *   M: City
  *   N: State
  */
-@ApplicationScoped
+@Service
 public class BulkIngestionService {
 
-    private static final Logger LOG = Logger.getLogger(BulkIngestionService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(BulkIngestionService.class);
 
-    @ConfigProperty(name = "bulk.batch-size", defaultValue = "100")
+    @Value("${bulk.batch-size:100}")
     int batchSize;
 
-    @Inject
-    LeadCreationService leadCreationService;
+    private final LeadCreationService leadCreationService;
+    private final BulkUploadJobRepository bulkUploadJobRepository;
+    private final BulkUploadRowRepository bulkUploadRowRepository;
+
+    public BulkIngestionService(LeadCreationService leadCreationService,
+                                BulkUploadJobRepository bulkUploadJobRepository,
+                                BulkUploadRowRepository bulkUploadRowRepository) {
+        this.leadCreationService = leadCreationService;
+        this.bulkUploadJobRepository = bulkUploadJobRepository;
+        this.bulkUploadRowRepository = bulkUploadRowRepository;
+    }
 
     // -------------------------------------------------------
     // LP3.1: Excel file upload
@@ -100,7 +112,7 @@ public class BulkIngestionService {
                 }
             }
         } catch (Exception e) {
-            LOG.errorf("Excel ingestion failed at row %d: %s", rowIndex, e.getMessage());
+            LOG.error("Excel ingestion failed at row {}: {}", rowIndex, e.getMessage());
             job.status = "FAILED";
             return new BulkIngestionResponse(job.id, "FAILED", job.totalRows,
                 successCount, job.failedRows, failures);
@@ -108,7 +120,7 @@ public class BulkIngestionService {
 
         job.status = "COMPLETED";
         job.completedAt = LocalDateTime.now();
-        LOG.infof("Bulk Excel job %s complete: total=%d success=%d failed=%d",
+        LOG.info("Bulk Excel job {} complete: total={} success={} failed={}",
             job.id, job.totalRows, job.successRows, job.failedRows);
         return new BulkIngestionResponse(job.id, "COMPLETED", job.totalRows,
             successCount, job.failedRows, failures);
@@ -152,7 +164,7 @@ public class BulkIngestionService {
 
         job.status = "COMPLETED";
         job.completedAt = LocalDateTime.now();
-        LOG.infof("Bulk API job %s complete: total=%d success=%d failed=%d",
+        LOG.info("Bulk API job {} complete: total={} success={} failed={}",
             job.id, job.totalRows, job.successRows, job.failedRows);
         return new BulkIngestionResponse(job.id, "COMPLETED", job.totalRows,
             successCount, job.failedRows, failures);
@@ -179,7 +191,7 @@ public class BulkIngestionService {
             return null;  // null = success
 
         } catch (Exception e) {
-            LOG.warnf("Bulk row %d failed: %s", rowNumber, e.getMessage());
+            LOG.warn("Bulk row {} failed: {}", rowNumber, e.getMessage());
             String errorCode = extractErrorCode(e);
             persistRowResult(job, rowNumber, null, "FAILED", errorCode, e.getMessage(), rawData);
             return new BulkIngestionResponse.RowResult(rowNumber, errorCode, e.getMessage());
@@ -195,7 +207,7 @@ public class BulkIngestionService {
             persistRowResult(job, rowNumber, response.lrn, "SUCCESS", null, null, record.toString());
             return null;
         } catch (Exception e) {
-            LOG.warnf("API bulk record %d failed: %s", rowNumber, e.getMessage());
+            LOG.warn("API bulk record {} failed: {}", rowNumber, e.getMessage());
             String errorCode = extractErrorCode(e);
             persistRowResult(job, rowNumber, null, "FAILED", errorCode, e.getMessage(), record.toString());
             return new BulkIngestionResponse.RowResult(rowNumber, errorCode, e.getMessage());
@@ -244,18 +256,17 @@ public class BulkIngestionService {
     // Persistence helpers
     // -------------------------------------------------------
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     BulkUploadJob createJob(String jobType, String userId) {
         BulkUploadJob job = new BulkUploadJob();
         job.jobType   = jobType;
         job.status    = "PENDING";
         job.createdBy = userId;
         job.createdAt = LocalDateTime.now();
-        job.persist();
-        return job;
+        return bulkUploadJobRepository.save(job);
     }
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     void persistRowResult(BulkUploadJob job, int rowNumber, String lrn,
                           String status, String errorCode, String errorMessage, String rawData) {
         BulkUploadRow rowRecord = new BulkUploadRow();
@@ -266,7 +277,7 @@ public class BulkIngestionService {
         rowRecord.errorCode    = errorCode;
         rowRecord.errorMessage = errorMessage;
         rowRecord.rawData      = rawData;
-        rowRecord.persist();
+        bulkUploadRowRepository.save(rowRecord);
     }
 
     // -------------------------------------------------------

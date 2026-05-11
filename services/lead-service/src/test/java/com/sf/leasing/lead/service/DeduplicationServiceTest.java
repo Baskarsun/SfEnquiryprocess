@@ -10,12 +10,14 @@ import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.infrastructure.adapter.CautionListAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.PanDedupAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.UcicMappingAdapter;
-import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.mockito.InjectMock;
-import jakarta.inject.Inject;
+import com.sf.leasing.lead.infrastructure.persistence.LeadDedupResultRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -23,23 +25,40 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-@QuarkusTest
+@ExtendWith(MockitoExtension.class)
 class DeduplicationServiceTest {
 
-    @Inject
-    DeduplicationService deduplicationService;
-
-    @InjectMock
+    @Mock
     CautionListAdapter cautionListAdapter;
 
-    @InjectMock
+    @Mock
     UcicMappingAdapter ucicMappingAdapter;
 
-    @InjectMock
+    @Mock
     PanDedupAdapter panDedupAdapter;
+
+    @Mock
+    ExceptionQueueService exceptionQueueService;
+
+    @Mock
+    LeadDedupResultRepository dedupResultRepository;
+
+    @Mock
+    EntityManager em;
+
+    DeduplicationService deduplicationService;
 
     @BeforeEach
     void setUp() {
+        deduplicationService = new DeduplicationService(
+            exceptionQueueService,
+            cautionListAdapter,
+            ucicMappingAdapter,
+            panDedupAdapter,
+            dedupResultRepository
+        );
+        ReflectionTestUtils.setField(deduplicationService, "em", em);
+
         when(cautionListAdapter.checkPan(anyString()))
             .thenReturn(CautionListAdapter.CautionStatus.ALLOWED);
         when(ucicMappingAdapter.lookupByPan(anyString()))

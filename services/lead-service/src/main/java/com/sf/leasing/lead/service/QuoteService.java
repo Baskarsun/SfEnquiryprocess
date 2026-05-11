@@ -13,10 +13,12 @@ import com.sf.leasing.lead.domain.model.Quote;
 import com.sf.leasing.lead.infrastructure.adapter.ProductPriceAdapter;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.OpportunityRepository;
+import com.sf.leasing.lead.infrastructure.persistence.QuoteRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -29,7 +31,7 @@ import java.util.stream.Collectors;
  * PP6: Quote lifecycle management.
  *
  * Business rules enforced:
- *   PP6.1 — Product Model Price Service; NDLP ≠ submitted cost → override + advisory.
+ *   PP6.1 — Product Model Price Service; NDLP != submitted cost → override + advisory.
  *   PP6.2 — Rack rate quote; no approval required.
  *   PP6.3 — Customised quote; deviations from rack rate trigger approval workflow.
  *   PP6.4 — Unapproved customised quotes cannot be shared.
@@ -37,22 +39,31 @@ import java.util.stream.Collectors;
  *   PP6.6 — Quote lock (Draft → Shared → Locked); post-lock edits blocked without unlock.
  *   PP6.7 — Appraisal category validation on lock.
  */
-@ApplicationScoped
+@Service
 public class QuoteService {
 
-    private static final Logger LOG = Logger.getLogger(QuoteService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(QuoteService.class);
 
-    @Inject
-    OpportunityService opportunityService;
+    private final OpportunityService opportunityService;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final ProductPriceAdapter productPriceAdapter;
+    private final LeadEventProducer eventProducer;
+    private final QuoteRepository quoteRepository;
+    private final OpportunityRepository opportunityRepository;
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
-
-    @Inject
-    ProductPriceAdapter productPriceAdapter;
-
-    @Inject
-    LeadEventProducer eventProducer;
+    public QuoteService(OpportunityService opportunityService,
+                        RedisSequenceGenerator sequenceGenerator,
+                        ProductPriceAdapter productPriceAdapter,
+                        LeadEventProducer eventProducer,
+                        QuoteRepository quoteRepository,
+                        OpportunityRepository opportunityRepository) {
+        this.opportunityService = opportunityService;
+        this.sequenceGenerator = sequenceGenerator;
+        this.productPriceAdapter = productPriceAdapter;
+        this.eventProducer = eventProducer;
+        this.quoteRepository = quoteRepository;
+        this.opportunityRepository = opportunityRepository;
+    }
 
     // -------------------------------------------------------
     // PP6.1–PP6.5: Create Quote
@@ -74,11 +85,11 @@ public class QuoteService {
             advisoryMessage = String.format(
                 "Asset cost overridden from %s to NDLP %s per Product Price Service (PP6.1).",
                 req.assetCost, ndlp.get());
-            LOG.infof("PP6.1 NDLP override: OPP=%s submitted=%s ndlp=%s", opportunityId, req.assetCost, ndlp.get());
+            LOG.info("PP6.1 NDLP override: OPP={} submitted={} ndlp={}", opportunityId, req.assetCost, ndlp.get());
         }
 
         // PP6.5: supersede prior DRAFT/APPROVED versions; bump version number
-        int newVersion = Quote.maxVersionForOpportunity(opp.id) + 1;
+        int newVersion = quoteRepository.maxVersionForOpportunity(opp.id) + 1;
         if (newVersion > 1) {
             supersedePriorVersions(opp.id, userId);
         }
@@ -111,7 +122,7 @@ public class QuoteService {
         quote.appraisalCategory = req.appraisalCategory;
         quote.createdBy       = req.createdBy != null ? req.createdBy : userId;
         quote.createdAt       = LocalDateTime.now();
-        quote.persist();
+        quoteRepository.save(quote);
 
         // Advance Opportunity to QUOTED
         if (opp.status == OpportunityStatus.OPEN) {
@@ -120,7 +131,7 @@ public class QuoteService {
             opp.updatedAt  = LocalDateTime.now();
         }
 
-        LOG.infof("Quote created: QT=%s OPP=%s version=%d type=%s approvalRequired=%b",
+        LOG.info("Quote created: QT={} OPP={} version={} type={} approvalRequired={}",
             quoteId, opportunityId, newVersion, req.quoteType, approvalRequired);
         return QuoteResponse.from(quote);
     }
@@ -157,7 +168,7 @@ public class QuoteService {
         quote.updatedBy  = userId;
         quote.updatedAt  = now;
 
-        LOG.infof("Quote approval: QT=%s decision=%s by=%s", quoteId, req.decision, decidedBy);
+        LOG.info("Quote approval: QT={} decision={} by={}", quoteId, req.decision, decidedBy);
         return QuoteResponse.from(quote);
     }
 
@@ -185,7 +196,7 @@ public class QuoteService {
         quote.updatedBy = sharedBy;
         quote.updatedAt = LocalDateTime.now();
 
-        LOG.infof("Quote shared: QT=%s by=%s", quoteId, sharedBy);
+        LOG.info("Quote shared: QT={} by={}", quoteId, sharedBy);
         return QuoteResponse.from(quote);
     }
 
@@ -214,14 +225,14 @@ public class QuoteService {
                 quote.lockedAt = now;
                 quote.lockedBy = req.requestedBy != null ? req.requestedBy : userId;
 
-                Opportunity opp = Opportunity.findById(quote.opportunityId);
+                Opportunity opp = opportunityRepository.findById(quote.opportunityId).orElse(null);
                 if (opp != null) {
                     opp.status    = OpportunityStatus.QUOTE_LOCKED;
                     opp.updatedBy = userId;
                     opp.updatedAt = now;
                 }
                 eventProducer.publishQuoteLocked(quote.quoteId, quote.opportunityBusinessId, userId);
-                LOG.infof("Quote locked: QT=%s by=%s", quoteId, quote.lockedBy);
+                LOG.info("Quote locked: QT={} by={}", quoteId, quote.lockedBy);
             }
 
             case "REQUEST_UNLOCK" -> {
@@ -232,7 +243,7 @@ public class QuoteService {
                 quote.status              = QuoteStatus.UNLOCK_REQUESTED;
                 quote.unlockRequestedBy   = req.requestedBy != null ? req.requestedBy : userId;
                 quote.unlockRequestedAt   = now;
-                LOG.infof("Quote unlock requested: QT=%s by=%s", quoteId, quote.unlockRequestedBy);
+                LOG.info("Quote unlock requested: QT={} by={}", quoteId, quote.unlockRequestedBy);
             }
 
             case "APPROVE_UNLOCK" -> {
@@ -245,7 +256,7 @@ public class QuoteService {
                 quote.unlockApprovedAt  = now;
                 quote.lockedAt          = null;
                 quote.lockedBy          = null;
-                LOG.infof("Quote unlocked: QT=%s approved by=%s", quoteId, quote.unlockApprovedBy);
+                LOG.info("Quote unlocked: QT={} approved by={}", quoteId, quote.unlockApprovedBy);
             }
 
             default -> throw new BusinessException(ErrorCodes.QUOTE_INVALID_LOCK_ACTION,
@@ -263,7 +274,7 @@ public class QuoteService {
 
     public List<QuoteResponse> listByOpportunity(String opportunityId) {
         Opportunity opp = opportunityService.resolveOpportunityEntity(opportunityId);
-        return Quote.findByOpportunity(opp.id)
+        return quoteRepository.findByOpportunityIdOrderByVersionAsc(opp.id)
             .stream()
             .map(QuoteResponse::from)
             .collect(Collectors.toList());
@@ -278,10 +289,10 @@ public class QuoteService {
     // -------------------------------------------------------
 
     Quote resolveQuoteEntity(String quoteId) {
-        Quote q = Quote.findByQuoteId(quoteId);
+        Quote q = quoteRepository.findByQuoteId(quoteId).orElse(null);
         if (q == null) {
             try {
-                q = Quote.findById(UUID.fromString(quoteId));
+                q = quoteRepository.findById(UUID.fromString(quoteId)).orElse(null);
             } catch (IllegalArgumentException ignored) {}
         }
         if (q == null) {
@@ -291,7 +302,7 @@ public class QuoteService {
     }
 
     private void supersedePriorVersions(UUID opportunityId, String updatedBy) {
-        List<Quote> prior = Quote.findByOpportunity(opportunityId);
+        List<Quote> prior = quoteRepository.findByOpportunityIdOrderByVersionAsc(opportunityId);
         LocalDateTime now = LocalDateTime.now();
         for (Quote q : prior) {
             if (q.status == QuoteStatus.DRAFT || q.status == QuoteStatus.APPROVED) {

@@ -1,10 +1,11 @@
 package com.sf.leasing.lead.service;
 
 import com.sf.leasing.lead.api.dto.response.DashboardResponse;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,12 +19,12 @@ import java.util.List;
  *   3. Aging report (0-7 / 8-15 / 16-30 / 30+ days)
  *   4. Marketing source report (leads by Source Category + Source Name)
  */
-@ApplicationScoped
+@Service
 public class DashboardService {
 
-    private static final Logger LOG = Logger.getLogger(DashboardService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(DashboardService.class);
 
-    @Inject
+    @PersistenceContext
     EntityManager em;
 
     // -------------------------------------------------------
@@ -43,7 +44,7 @@ public class DashboardService {
                 ((Number) row[1]).longValue()
             ));
         }
-        LOG.debugf("Temperature distribution: %d buckets", entries.size());
+        LOG.debug("Temperature distribution: {} buckets", entries.size());
         return new DashboardResponse("TEMPERATURE_DISTRIBUTION", entries);
     }
 

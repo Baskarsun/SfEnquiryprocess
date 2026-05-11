@@ -1,23 +1,36 @@
 package com.sf.leasing.lead.infrastructure.messaging;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import org.eclipse.microprofile.reactive.messaging.Emitter;
-import jakarta.inject.Inject;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.Map;
-import java.util.HashMap;
 
-@ApplicationScoped
+@Component
 public class LeadEventProducer {
 
-    private static final Logger LOG = Logger.getLogger(LeadEventProducer.class);
+    private static final Logger LOG = LoggerFactory.getLogger(LeadEventProducer.class);
 
-    @Inject
-    @Channel("lead-events")
-    Emitter<String> emitter;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    @Value("${kafka.topics.lead-events}")
+    private String leadEventsTopic;
+
+    @Value("${kafka.topics.customer-events}")
+    private String customerEventsTopic;
+
+    @Value("${kafka.topics.opportunity-events}")
+    private String opportunityEventsTopic;
+
+    @Value("${kafka.topics.lms-updates}")
+    private String lmsUpdatesTopic;
+
+    public LeadEventProducer(KafkaTemplate<String, String> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
 
     public void publishLeadCreated(String lrn, String tempCustomerNumber, String createdBy, String channel) {
         String payload = buildEvent("LeadCreated", Map.of(
@@ -27,8 +40,8 @@ public class LeadEventProducer {
             "channel", channel,
             "timestamp", Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event LeadCreated published: LRN=%s", lrn);
+        send(leadEventsTopic, lrn, payload);
+        LOG.info("Event LeadCreated published: LRN={}", lrn);
     }
 
     public void publishLeadAssigned(String lrn, String assignedTo, String level) {
@@ -38,8 +51,8 @@ public class LeadEventProducer {
             "hierarchyLevel", level,
             "timestamp", Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event LeadAssigned published: LRN=%s -> %s", lrn, assignedTo);
+        send(leadEventsTopic, lrn, payload);
+        LOG.info("Event LeadAssigned published: LRN={} -> {}", lrn, assignedTo);
     }
 
     public void publishLeadPromoted(String lrn, String prospectUuid, String promotedBy) {
@@ -49,13 +62,9 @@ public class LeadEventProducer {
             "promotedBy", promotedBy,
             "timestamp", Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event LeadPromoted published: LRN=%s prospectUuid=%s", lrn, prospectUuid);
+        send(leadEventsTopic, lrn, payload);
+        LOG.info("Event LeadPromoted published: LRN={} prospectUuid={}", lrn, prospectUuid);
     }
-
-    // -------------------------------------------------------
-    // Phase 4 events
-    // -------------------------------------------------------
 
     public void publishOpportunityCreated(String opportunityId, String prospectId, String lobTag, String createdBy) {
         String payload = buildEvent("OpportunityCreated", Map.of(
@@ -65,8 +74,8 @@ public class LeadEventProducer {
             "createdBy",     createdBy,
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event OpportunityCreated published: OPP=%s", opportunityId);
+        send(opportunityEventsTopic, opportunityId, payload);
+        LOG.info("Event OpportunityCreated published: OPP={}", opportunityId);
     }
 
     public void publishQuoteLocked(String quoteId, String opportunityId, String lockedBy) {
@@ -76,8 +85,8 @@ public class LeadEventProducer {
             "lockedBy",      lockedBy,
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event QuoteLocked published: QT=%s OPP=%s", quoteId, opportunityId);
+        send(opportunityEventsTopic, quoteId, payload);
+        LOG.info("Event QuoteLocked published: QT={} OPP={}", quoteId, opportunityId);
     }
 
     public void publishApplicationInitiated(String applicationId, String prospectId,
@@ -89,8 +98,8 @@ public class LeadEventProducer {
             "initiatedBy",   initiatedBy,
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event ApplicationInitiated published: APP=%s", applicationId);
+        send(leadEventsTopic, applicationId, payload);
+        LOG.info("Event ApplicationInitiated published: APP={}", applicationId);
     }
 
     public void publishApplicationEligible(String applicationId, String prospectId) {
@@ -99,8 +108,8 @@ public class LeadEventProducer {
             "prospectId",    safeStr(prospectId),
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event ApplicationEligible published: APP=%s", applicationId);
+        send(leadEventsTopic, applicationId, payload);
+        LOG.info("Event ApplicationEligible published: APP={}", applicationId);
     }
 
     public void publishCamApproved(String applicationId, String prospectId,
@@ -112,13 +121,9 @@ public class LeadEventProducer {
             "approvedBy",    approvedBy,
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event CamApproved published: APP=%s sanctionId=%s", applicationId, sanctionId);
+        send(leadEventsTopic, applicationId, payload);
+        LOG.info("Event CamApproved published: APP={} sanctionId={}", applicationId, sanctionId);
     }
-
-    // -------------------------------------------------------
-    // Phase 5 events
-    // -------------------------------------------------------
 
     public void publishCustomerCreated(String customerId, String prospectId,
                                         String applicationId, String createdBy) {
@@ -129,8 +134,8 @@ public class LeadEventProducer {
             "createdBy",     createdBy,
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event CustomerCreated published: CUST=%s PROSPECT=%s", customerId, prospectId);
+        send(customerEventsTopic, customerId, payload);
+        LOG.info("Event CustomerCreated published: CUST={} PROSPECT={}", customerId, prospectId);
     }
 
     public void publishOpportunityWon(String opportunityId, String prospectId, String customerId) {
@@ -140,8 +145,8 @@ public class LeadEventProducer {
             "customerId",    safeStr(customerId),
             "timestamp",     Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event OpportunityWon published: OPP=%s CUST=%s", opportunityId, customerId);
+        send(opportunityEventsTopic, opportunityId, payload);
+        LOG.info("Event OpportunityWon published: OPP={} CUST={}", opportunityId, customerId);
     }
 
     public void publishLmsUpdated(String lrn, String prospectId, String customerId) {
@@ -151,21 +156,21 @@ public class LeadEventProducer {
             "customerId", safeStr(customerId),
             "timestamp",  Instant.now().toString()
         ));
-        send(payload);
-        LOG.infof("Event LmsUpdated published: LRN=%s CUST=%s", lrn, customerId);
+        send(lmsUpdatesTopic, lrn, payload);
+        LOG.info("Event LmsUpdated published: LRN={} CUST={}", lrn, customerId);
+    }
+
+    private void send(String topic, String key, String payload) {
+        try {
+            kafkaTemplate.send(topic, key, payload);
+        } catch (Exception e) {
+            // Event publishing failure must not block the business transaction
+            LOG.warn("Failed to publish event to topic {} (suppressed): {}", topic, e.getMessage());
+        }
     }
 
     private static String safeStr(String value) {
         return value != null ? value : "";
-    }
-
-    private void send(String payload) {
-        try {
-            emitter.send(payload);
-        } catch (Exception e) {
-            // Event publishing failure must not block the business transaction
-            LOG.warnf("Failed to publish event (suppressed): %s", e.getMessage());
-        }
     }
 
     private String buildEvent(String type, Map<String, String> data) {

@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * Adapter for the external UCIC (Unique Customer Identification Code) mapping service (LP4.4).
@@ -10,12 +11,12 @@ import org.jboss.logging.Logger;
  * On a successful match the response carries the UCIC code and existing customer codes.
  * These are stored on the Lead for DedupLabel resolution.
  */
-@ApplicationScoped
+@Component
 public class UcicMappingAdapter {
 
-    private static final Logger LOG = Logger.getLogger(UcicMappingAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(UcicMappingAdapter.class);
 
-    @ConfigProperty(name = "adapters.ucic.stub-mode", defaultValue = "true")
+    @Value("${adapters.ucic.stub-mode:true}")
     boolean stubMode;
 
     public static class UcicResult {
@@ -42,11 +43,11 @@ public class UcicMappingAdapter {
      */
     public UcicResult lookupByPan(String pan) {
         if (stubMode) {
-            LOG.debugf("UCIC mapping [STUB]: PAN=%s → not found", pan);
+            LOG.debug("UCIC mapping [STUB]: PAN={} → not found", pan);
             return UcicResult.notFound();
         }
         // TODO: wire to real UCIC REST endpoint
-        LOG.warnf("UCIC adapter is not configured. Returning not-found for PAN=%s", pan);
+        LOG.warn("UCIC adapter is not configured. Returning not-found for PAN={}", pan);
         return UcicResult.notFound();
     }
 
@@ -55,10 +56,10 @@ public class UcicMappingAdapter {
      */
     public UcicResult lookupByGstin(String gstin) {
         if (stubMode) {
-            LOG.debugf("UCIC mapping [STUB]: GSTIN=%s → not found", gstin);
+            LOG.debug("UCIC mapping [STUB]: GSTIN={} → not found", gstin);
             return UcicResult.notFound();
         }
-        LOG.warnf("UCIC adapter is not configured. Returning not-found for GSTIN=%s", gstin);
+        LOG.warn("UCIC adapter is not configured. Returning not-found for GSTIN={}", gstin);
         return UcicResult.notFound();
     }
 }

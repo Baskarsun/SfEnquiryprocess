@@ -8,10 +8,12 @@ import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Application;
 import com.sf.leasing.lead.domain.model.CamWorkflow;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicationRepository;
+import com.sf.leasing.lead.infrastructure.persistence.CamWorkflowRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -22,16 +24,25 @@ import java.time.LocalDateTime;
  * Statuses: NOT_STARTED → IN_PROGRESS → APPROVED | DECLINED
  * Sanction ID and package are displayed on the Prospect screen once issued.
  */
-@ApplicationScoped
+@Service
 public class CamWorkflowService {
 
-    private static final Logger LOG = Logger.getLogger(CamWorkflowService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CamWorkflowService.class);
 
-    @Inject
-    LeadEventProducer eventProducer;
+    private final LeadEventProducer eventProducer;
+    private final NotificationService notificationService;
+    private final ApplicationRepository applicationRepository;
+    private final CamWorkflowRepository camWorkflowRepository;
 
-    @Inject
-    NotificationService notificationService;
+    public CamWorkflowService(LeadEventProducer eventProducer,
+                               NotificationService notificationService,
+                               ApplicationRepository applicationRepository,
+                               CamWorkflowRepository camWorkflowRepository) {
+        this.eventProducer = eventProducer;
+        this.notificationService = notificationService;
+        this.applicationRepository = applicationRepository;
+        this.camWorkflowRepository = camWorkflowRepository;
+    }
 
     // -------------------------------------------------------
     // Initiate CAM (parallel to KYC upload)
@@ -47,7 +58,7 @@ public class CamWorkflowService {
                 "Application modification is blocked.");
         }
 
-        CamWorkflow existing = CamWorkflow.findByApplication(app.id);
+        CamWorkflow existing = camWorkflowRepository.findByApplicationId(app.id).orElse(null);
         if (existing != null && existing.camStatus != CamStatus.NOT_STARTED) {
             throw new BusinessException(ErrorCodes.CAM_ALREADY_INITIATED,
                 "CAM is already initiated for application: " + applicationId);
@@ -63,7 +74,7 @@ public class CamWorkflowService {
         cam.initiatedBy      = initiatedBy;
         cam.createdAt        = existing != null ? existing.createdAt : now;
         cam.updatedAt        = now;
-        if (existing == null) cam.persist();
+        camWorkflowRepository.save(cam);
 
         // Sync cam_status back to Application
         app.camStatus    = CamStatus.IN_PROGRESS;
@@ -71,7 +82,7 @@ public class CamWorkflowService {
         app.updatedBy    = userId;
         app.updatedAt    = now;
 
-        LOG.infof("CAM initiated: APP=%s by=%s", applicationId, initiatedBy);
+        LOG.info("CAM initiated: APP={} by={}", applicationId, initiatedBy);
         return cam;
     }
 
@@ -84,9 +95,11 @@ public class CamWorkflowService {
                                        String sanctionId, String sanctionPackage,
                                        String declineReason, String decidedBy) {
         Application app = resolveApplication(applicationId);
-        CamWorkflow cam = CamWorkflow.findByApplication(app.id);
+        CamWorkflow cam = camWorkflowRepository.findByApplicationId(app.id)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.CAM_NOT_IN_PROGRESS,
+                "CAM is not in progress for application: " + applicationId));
 
-        if (cam == null || cam.camStatus != CamStatus.IN_PROGRESS) {
+        if (cam.camStatus != CamStatus.IN_PROGRESS) {
             throw new BusinessException(ErrorCodes.CAM_NOT_IN_PROGRESS,
                 "CAM is not in progress for application: " + applicationId);
         }
@@ -107,7 +120,7 @@ public class CamWorkflowService {
 
             eventProducer.publishCamApproved(app.applicationId, app.prospectBusinessId, sanctionId, decidedBy);
             notificationService.notifyCamApproved(applicationId, sanctionId);
-            LOG.infof("CAM approved: APP=%s sanctionId=%s by=%s", applicationId, sanctionId, decidedBy);
+            LOG.info("CAM approved: APP={} sanctionId={} by={}", applicationId, sanctionId, decidedBy);
 
         } else if ("DECLINE".equalsIgnoreCase(decision)) {
             cam.camStatus      = CamStatus.DECLINED;
@@ -117,7 +130,7 @@ public class CamWorkflowService {
             app.camStatus      = CamStatus.DECLINED;
 
             notificationService.notifyCamDeclined(applicationId, declineReason);
-            LOG.infof("CAM declined: APP=%s reason=%s by=%s", applicationId, declineReason, decidedBy);
+            LOG.info("CAM declined: APP={} reason={} by={}", applicationId, declineReason, decidedBy);
 
         } else {
             throw new BusinessException(ErrorCodes.CAM_INVALID_DECISION,
@@ -137,12 +150,9 @@ public class CamWorkflowService {
 
     public CamWorkflow getByApplicationId(String applicationId) {
         Application app = resolveApplication(applicationId);
-        CamWorkflow cam = CamWorkflow.findByApplication(app.id);
-        if (cam == null) {
-            throw new BusinessException(ErrorCodes.CAM_NOT_FOUND,
-                "No CAM workflow found for application: " + applicationId);
-        }
-        return cam;
+        return camWorkflowRepository.findByApplicationId(app.id)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.CAM_NOT_FOUND,
+                "No CAM workflow found for application: " + applicationId));
     }
 
     // -------------------------------------------------------
@@ -150,11 +160,8 @@ public class CamWorkflowService {
     // -------------------------------------------------------
 
     private Application resolveApplication(String applicationId) {
-        Application app = Application.findByApplicationId(applicationId);
-        if (app == null) {
-            throw new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
-                "Application not found: " + applicationId);
-        }
-        return app;
+        return applicationRepository.findByApplicationId(applicationId)
+            .orElseThrow(() -> new BusinessException(ErrorCodes.APPLICATION_NOT_FOUND,
+                "Application not found: " + applicationId));
     }
 }

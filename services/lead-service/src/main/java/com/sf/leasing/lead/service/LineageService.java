@@ -4,9 +4,11 @@ import com.sf.leasing.lead.api.dto.response.LineageResponse;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Lineage;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.LineageRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -19,37 +21,43 @@ import java.util.UUID;
  *
  * Supports cross-reference queries: given any ID in the chain, return full lineage.
  */
-@ApplicationScoped
+@Service
 public class LineageService {
 
-    private static final Logger LOG = Logger.getLogger(LineageService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(LineageService.class);
+
+    private final LineageRepository lineageRepository;
+
+    public LineageService(LineageRepository lineageRepository) {
+        this.lineageRepository = lineageRepository;
+    }
 
     // -------------------------------------------------------
     // Cross-reference queries (PP8.2)
     // -------------------------------------------------------
 
     public LineageResponse getByLeadLrn(String lrn) {
-        Lineage lineage = Lineage.findByLeadLrn(lrn);
+        Lineage lineage = lineageRepository.findByLeadLrn(lrn).orElse(null);
         return resolve(lineage, "LRN", lrn);
     }
 
     public LineageResponse getByProspectId(String prospectBusinessId) {
-        Lineage lineage = Lineage.find("prospectBusinessId", prospectBusinessId).firstResult();
+        Lineage lineage = lineageRepository.findByProspectBusinessId(prospectBusinessId).orElse(null);
         return resolve(lineage, "PROSPECT_ID", prospectBusinessId);
     }
 
     public LineageResponse getByApplicationBusinessId(String applicationBusinessId) {
-        Lineage lineage = Lineage.find("applicationBusinessId", applicationBusinessId).firstResult();
+        Lineage lineage = lineageRepository.findByApplicationBusinessId(applicationBusinessId).orElse(null);
         return resolve(lineage, "APPLICATION_ID", applicationBusinessId);
     }
 
     public LineageResponse getByCustomerId(String customerId) {
-        Lineage lineage = Lineage.find("customerId", customerId).firstResult();
+        Lineage lineage = lineageRepository.findByCustomerId(customerId).orElse(null);
         return resolve(lineage, "CUSTOMER_ID", customerId);
     }
 
     public LineageResponse getByOpportunityBusinessId(String opportunityBusinessId) {
-        Lineage lineage = Lineage.find("opportunityBusinessId", opportunityBusinessId).firstResult();
+        Lineage lineage = lineageRepository.findByOpportunityBusinessId(opportunityBusinessId).orElse(null);
         return resolve(lineage, "OPPORTUNITY_ID", opportunityBusinessId);
     }
 
@@ -60,46 +68,46 @@ public class LineageService {
 
     @Transactional
     public void linkOpportunity(UUID prospectUuid, UUID opportunityUuid, String opportunityBusinessId) {
-        Lineage lineage = Lineage.findByProspectUuid(prospectUuid);
+        Lineage lineage = lineageRepository.findByProspectUuid(prospectUuid).orElse(null);
         if (lineage == null) {
-            LOG.warnf("Lineage not found for prospect=%s; opportunity link skipped.", prospectUuid);
+            LOG.warn("Lineage not found for prospect={}; opportunity link skipped.", prospectUuid);
             return;
         }
         if (lineage.opportunityUuid == null) {
             lineage.opportunityUuid        = opportunityUuid;
             lineage.opportunityBusinessId  = opportunityBusinessId;
             lineage.updatedAt              = java.time.LocalDateTime.now();
-            LOG.infof("Lineage linked opportunity: PROSPECT=%s OPP=%s", prospectUuid, opportunityBusinessId);
+            LOG.info("Lineage linked opportunity: PROSPECT={} OPP={}", prospectUuid, opportunityBusinessId);
         }
     }
 
     @Transactional
     public void linkQuote(UUID prospectUuid, UUID quoteUuid, String quoteBusinessId) {
-        Lineage lineage = Lineage.findByProspectUuid(prospectUuid);
+        Lineage lineage = lineageRepository.findByProspectUuid(prospectUuid).orElse(null);
         if (lineage == null) {
-            LOG.warnf("Lineage not found for prospect=%s; quote link skipped.", prospectUuid);
+            LOG.warn("Lineage not found for prospect={}; quote link skipped.", prospectUuid);
             return;
         }
         if (lineage.quoteUuid == null) {
             lineage.quoteUuid        = quoteUuid;
             lineage.quoteBusinessId  = quoteBusinessId;
             lineage.updatedAt        = java.time.LocalDateTime.now();
-            LOG.infof("Lineage linked quote: PROSPECT=%s QT=%s", prospectUuid, quoteBusinessId);
+            LOG.info("Lineage linked quote: PROSPECT={} QT={}", prospectUuid, quoteBusinessId);
         }
     }
 
     @Transactional
     public void linkApplication(UUID prospectUuid, UUID applicationUuid, String applicationBusinessId) {
-        Lineage lineage = Lineage.findByProspectUuid(prospectUuid);
+        Lineage lineage = lineageRepository.findByProspectUuid(prospectUuid).orElse(null);
         if (lineage == null) {
-            LOG.warnf("Lineage not found for prospect=%s; application link skipped.", prospectUuid);
+            LOG.warn("Lineage not found for prospect={}; application link skipped.", prospectUuid);
             return;
         }
         if (lineage.applicationUuid == null) {
             lineage.applicationUuid        = applicationUuid;
             lineage.applicationBusinessId  = applicationBusinessId;
             lineage.updatedAt              = java.time.LocalDateTime.now();
-            LOG.infof("Lineage linked application: PROSPECT=%s APP=%s", prospectUuid, applicationBusinessId);
+            LOG.info("Lineage linked application: PROSPECT={} APP={}", prospectUuid, applicationBusinessId);
         }
     }
 

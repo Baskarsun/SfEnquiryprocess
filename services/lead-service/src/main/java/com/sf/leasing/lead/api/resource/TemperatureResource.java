@@ -3,14 +3,15 @@ package com.sf.leasing.lead.api.resource;
 import com.sf.leasing.lead.api.dto.request.OverrideTemperatureRequest;
 import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.domain.model.TemperatureAudit;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
+import com.sf.leasing.lead.infrastructure.persistence.TemperatureAuditRepository;
 import com.sf.leasing.lead.service.TemperatureEngineService;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -20,54 +21,60 @@ import java.util.List;
  * PUT  /api/v1/leads/{lrn}/temperature  — manual override
  * GET  /api/v1/leads/{lrn}/temperature  — current temperature + audit history
  */
-@Path("/api/v1/leads")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/leads")
 @Tag(name = "Lead Temperature", description = "LP7: Temperature classification and manual override")
 public class TemperatureResource {
 
-    @Inject
-    TemperatureEngineService temperatureEngineService;
+    private final TemperatureEngineService temperatureEngineService;
+    private final LeadRepository leadRepository;
+    private final TemperatureAuditRepository temperatureAuditRepository;
+
+    public TemperatureResource(TemperatureEngineService temperatureEngineService,
+                               LeadRepository leadRepository,
+                               TemperatureAuditRepository temperatureAuditRepository) {
+        this.temperatureEngineService = temperatureEngineService;
+        this.leadRepository = leadRepository;
+        this.temperatureAuditRepository = temperatureAuditRepository;
+    }
 
     /**
      * PUT /api/v1/leads/{lrn}/temperature
      * LP7.3: Manual temperature override. StatusReason (code + free text) mandatory.
      */
-    @PUT
-    @Path("/{lrn}/temperature")
+    @PutMapping("/{lrn}/temperature")
     @Operation(summary = "Manually override lead temperature (LP7.3)")
-    public Response overrideTemperature(
-        @PathParam("lrn") String lrn,
-        @Valid OverrideTemperatureRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> overrideTemperature(
+        @PathVariable("lrn") String lrn,
+        @Valid @RequestBody OverrideTemperatureRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         temperatureEngineService.overrideTemperature(lrn, req, userId);
-        return Response.ok("{\"message\":\"Temperature updated successfully\"}").build();
+        return ResponseEntity.ok("{\"message\":\"Temperature updated successfully\"}");
     }
 
     /**
      * GET /api/v1/leads/{lrn}/temperature
      * Returns current temperature and full audit trail.
      */
-    @GET
-    @Path("/{lrn}/temperature")
+    @GetMapping("/{lrn}/temperature")
     @Operation(summary = "Get current temperature and history (LP7)")
-    public Response getTemperature(
-        @PathParam("lrn") String lrn,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> getTemperature(
+        @PathVariable("lrn") String lrn,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        Lead lead = Lead.findByLrn(lrn);
+        Lead lead = leadRepository.findByLrn(lrn).orElse(null);
         if (lead == null) {
-            return Response.status(Response.Status.NOT_FOUND).build();
+            return ResponseEntity.notFound().build();
         }
-        List<TemperatureAudit> history = TemperatureAudit.findByLeadId(lead.id);
-        return Response.ok(new TemperatureInfo(lead, history)).build();
+        List<TemperatureAudit> history = temperatureAuditRepository.findByLeadId(lead.id);
+        return ResponseEntity.ok(new TemperatureInfo(lead, history));
     }
 
     // -------------------------------------------------------

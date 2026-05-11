@@ -5,32 +5,60 @@ import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.infrastructure.adapter.GstinValidationAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.PanValidationAdapter;
-import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.mockito.InjectMock;
-import jakarta.inject.Inject;
+import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectKycValidationRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-@QuarkusTest
+@ExtendWith(MockitoExtension.class)
 class ProspectValidationServiceTest {
 
-    @Inject
-    ProspectValidationService validationService;
-
-    @InjectMock
+    @Mock
     PanValidationAdapter panAdapter;
 
-    @InjectMock
+    @Mock
     GstinValidationAdapter gstinAdapter;
+
+    @Mock
+    RedisSequenceGenerator sequenceGenerator;
+
+    @Mock
+    ExceptionQueueService exceptionQueueService;
+
+    @Mock
+    NotificationService notificationService;
+
+    @Mock
+    ProspectRepository prospectRepository;
+
+    @Mock
+    ProspectKycValidationRepository prospectKycValidationRepository;
+
+    ProspectValidationService validationService;
 
     @BeforeEach
     void setUp() {
+        validationService = new ProspectValidationService(
+            panAdapter,
+            gstinAdapter,
+            sequenceGenerator,
+            exceptionQueueService,
+            notificationService,
+            prospectRepository,
+            prospectKycValidationRepository
+        );
+
         when(panAdapter.validate(anyString()))
             .thenReturn(PanValidationAdapter.PanValidationResult.success(
                 "TEST ENTITY PVT LTD", "123 Test Street"));
@@ -128,6 +156,9 @@ class ProspectValidationServiceTest {
 
     @Test
     void shouldThrowProspectNotFoundAfterValidTypeCheck() {
+        when(prospectRepository.findById(org.mockito.ArgumentMatchers.any(UUID.class)))
+            .thenReturn(Optional.empty());
+
         BusinessException ex = assertThrows(BusinessException.class,
             () -> validationService.triggerValidation(UUID.randomUUID(), "PAN", "USER001"));
         assertEquals(ErrorCodes.PROSPECT_NOT_FOUND, ex.getErrorCode());

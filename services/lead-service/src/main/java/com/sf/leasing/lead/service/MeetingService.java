@@ -6,10 +6,12 @@ import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Meeting;
 import com.sf.leasing.lead.domain.model.Prospect;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.MeetingRepository;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,20 +24,27 @@ import java.util.UUID;
  * with the original_meeting_id reference set — the original is never modified.
  * Each meeting receives a system-generated MTG-YYYY-NNNNN identifier.
  */
-@ApplicationScoped
+@Service
 public class MeetingService {
 
-    private static final Logger LOG = Logger.getLogger(MeetingService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(MeetingService.class);
 
-    @Inject
-    RedisSequenceGenerator sequenceGenerator;
+    private final RedisSequenceGenerator sequenceGenerator;
+    private final ProspectRepository prospectRepository;
+    private final MeetingRepository meetingRepository;
+
+    public MeetingService(RedisSequenceGenerator sequenceGenerator,
+                          ProspectRepository prospectRepository,
+                          MeetingRepository meetingRepository) {
+        this.sequenceGenerator = sequenceGenerator;
+        this.prospectRepository = prospectRepository;
+        this.meetingRepository = meetingRepository;
+    }
 
     @Transactional
     public Meeting logMeeting(UUID prospectId, LogMeetingRequest req, String createdBy) {
-        Prospect prospect = Prospect.findById(prospectId);
-        if (prospect == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId);
-        }
+        Prospect prospect = prospectRepository.findById(prospectId).orElseThrow(
+            () -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId));
         if (prospect.isClosed()) {
             throw new BusinessException(ErrorCodes.PROSPECT_ALREADY_CLOSED,
                 "Cannot log a meeting for a closed prospect.");
@@ -55,9 +64,9 @@ public class MeetingService {
         meeting.originalMeetingId = req.originalMeetingId;  // null for original, set for amendments
         meeting.createdBy        = createdBy;
         meeting.createdAt        = LocalDateTime.now();
-        meeting.persist();
+        meetingRepository.save(meeting);
 
-        LOG.infof("Meeting logged: %s for Prospect=%s by=%s", meetingId, prospectId, createdBy);
+        LOG.info("Meeting logged: {} for Prospect={} by={}", meetingId, prospectId, createdBy);
         return meeting;
     }
 
@@ -66,20 +75,16 @@ public class MeetingService {
      */
     @Transactional
     public Meeting amendMeeting(UUID prospectId, String originalMeetingId, LogMeetingRequest req, String amendedBy) {
-        Meeting original = Meeting.find("meetingId", originalMeetingId).firstResult();
-        if (original == null) {
-            throw new BusinessException(ErrorCodes.MEETING_NOT_FOUND, "Meeting not found: " + originalMeetingId);
-        }
+        Meeting original = meetingRepository.findByMeetingId(originalMeetingId).orElseThrow(
+            () -> new BusinessException(ErrorCodes.MEETING_NOT_FOUND, "Meeting not found: " + originalMeetingId));
 
         req.originalMeetingId = originalMeetingId;
         return logMeeting(prospectId, req, amendedBy);
     }
 
     public List<Meeting> getMeetings(UUID prospectId) {
-        Prospect prospect = Prospect.findById(prospectId);
-        if (prospect == null) {
-            throw new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId);
-        }
-        return Meeting.findByProspectId(prospectId);
+        prospectRepository.findById(prospectId).orElseThrow(
+            () -> new BusinessException(ErrorCodes.PROSPECT_NOT_FOUND, "Prospect not found: " + prospectId));
+        return meetingRepository.findByProspectId(prospectId);
     }
 }

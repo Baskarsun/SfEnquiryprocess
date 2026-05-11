@@ -1,57 +1,63 @@
 package com.sf.leasing.lead.api.resource;
 
 import com.sf.leasing.lead.domain.model.ExceptionQueueRecord;
+import com.sf.leasing.lead.infrastructure.persistence.ExceptionQueueRepository;
 import com.sf.leasing.lead.service.ExceptionQueueService;
-import jakarta.inject.Inject;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@Path("/api/v1/exception-queue")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/exception-queue")
 @Tag(name = "Exception Queue", description = "LP3.4 / EX-04: Exception queue management (CPU view)")
 public class ExceptionQueueResource {
 
-    @Inject
-    ExceptionQueueService exceptionQueueService;
+    private final ExceptionQueueService exceptionQueueService;
+    private final ExceptionQueueRepository exceptionQueueRepository;
 
-    @GET
-    @Operation(summary = "List exception queue entries")
-    public Response listExceptions(
-        @QueryParam("status")  @DefaultValue("OPEN") String status,
-        @QueryParam("page")    @DefaultValue("0")    int page,
-        @QueryParam("size")    @DefaultValue("50")   int size,
-        @HeaderParam("X-User-Id") String userId
-    ) {
-        if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
-        }
-        List<ExceptionQueueRecord> records = ExceptionQueueRecord.find("status = ?1 ORDER BY createdAt ASC", status)
-            .page(page, size)
-            .list();
-        return Response.ok(records).build();
+    public ExceptionQueueResource(ExceptionQueueService exceptionQueueService,
+                                   ExceptionQueueRepository exceptionQueueRepository) {
+        this.exceptionQueueService = exceptionQueueService;
+        this.exceptionQueueRepository = exceptionQueueRepository;
     }
 
-    @PATCH
-    @Path("/{id}/resolve")
-    @Operation(summary = "Resolve an exception queue entry")
-    public Response resolveException(
-        @PathParam("id") UUID id,
-        Map<String, String> body,
-        @HeaderParam("X-User-Id") String userId
-    ) {
+    @GetMapping
+    @Operation(summary = "List exception queue entries")
+    public ResponseEntity<?> listExceptions(
+            @RequestParam(defaultValue = "OPEN") String status,
+            @RequestParam(defaultValue = "0")    int page,
+            @RequestParam(defaultValue = "50")   int size,
+            @RequestHeader("X-User-Id") String userId) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        var pageable = PageRequest.of(page, size, Sort.by("createdAt").ascending());
+        List<ExceptionQueueRecord> records = exceptionQueueRepository
+            .findAll(pageable)
+            .filter(r -> status.equals(r.status))
+            .toList();
+        return ResponseEntity.ok(records);
+    }
+
+    @PatchMapping("/{id}/resolve")
+    @Operation(summary = "Resolve an exception queue entry")
+    public ResponseEntity<?> resolveException(
+            @PathVariable UUID id,
+            @RequestBody(required = false) Map<String, String> body,
+            @RequestHeader("X-User-Id") String userId) {
+        if (userId == null || userId.isBlank()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         String notes = body != null ? body.getOrDefault("resolutionNotes", "") : "";
         exceptionQueueService.resolveException(id, userId, notes);
-        return Response.ok().entity("{\"message\":\"Exception resolved.\"}").build();
+        return ResponseEntity.ok(Map.of("message", "Exception resolved."));
     }
 }

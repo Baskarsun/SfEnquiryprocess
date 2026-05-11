@@ -1,14 +1,13 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.ProspectStatus;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "prospects")
-public class Prospect extends PanacheEntityBase {
+public class Prospect {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -120,15 +119,6 @@ public class Prospect extends PanacheEntityBase {
 
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
-
-    // Finders
-    public static Prospect findByProspectId(String prospectId) {
-        return find("prospectId", prospectId).firstResult();
-    }
-
-    public static Prospect findByLeadLrn(String lrn) {
-        return find("leadLrn", lrn).firstResult();
-    }
 
     public boolean isDraft()    { return status == ProspectStatus.DRAFT; }
     public boolean isValidated(){ return status == ProspectStatus.VALIDATED; }

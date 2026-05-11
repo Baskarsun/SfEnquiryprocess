@@ -3,18 +3,15 @@ package com.sf.leasing.lead.api.resource;
 import com.sf.leasing.lead.api.dto.request.BulkIngestRequest;
 import com.sf.leasing.lead.api.dto.response.BulkIngestionResponse;
 import com.sf.leasing.lead.service.BulkIngestionService;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
-import org.jboss.resteasy.reactive.MultipartForm;
-import org.jboss.resteasy.reactive.PartType;
-import org.jboss.resteasy.reactive.RestForm;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -24,72 +21,61 @@ import java.util.List;
  * POST /api/v1/bulk/api     — JSON array of lead records
  * GET  /api/v1/bulk/{jobId} — job status / summary
  */
-@Path("/api/v1/bulk")
-@Produces(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/bulk")
 @Tag(name = "Bulk Ingestion", description = "LP3: Excel upload and API bulk lead ingestion")
 public class BulkIngestionResource {
 
-    @Inject
-    BulkIngestionService bulkIngestionService;
+    private final BulkIngestionService bulkIngestionService;
+
+    public BulkIngestionResource(BulkIngestionService bulkIngestionService) {
+        this.bulkIngestionService = bulkIngestionService;
+    }
 
     /**
      * POST /api/v1/bulk/excel
      * LP3.1: Upload an Excel file (.xlsx) using the approved template.
      * Multipart form field name: "file"
      */
-    @POST
-    @Path("/excel")
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @PostMapping("/excel")
     @Operation(summary = "Bulk upload leads from an Excel file (LP3.1)")
-    public Response uploadExcel(
-        @MultipartForm ExcelUploadForm form,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> uploadExcel(
+        @RequestParam("file") MultipartFile file,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        if (form.file == null) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                .entity("{\"error\":\"Excel file is required\"}")
-                .build();
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body("{\"error\":\"Excel file is required\"}");
         }
 
-        BulkIngestionResponse result = bulkIngestionService.ingestFromExcel(form.file, userId);
-        return Response.ok(result).build();
+        try {
+            BulkIngestionResponse result = bulkIngestionService.ingestFromExcel(file.getInputStream(), userId);
+            return ResponseEntity.ok(result);
+        } catch (IOException e) {
+            return ResponseEntity.badRequest().body("{\"error\":\"Failed to read uploaded file\"}");
+        }
     }
 
     /**
      * POST /api/v1/bulk/api
      * LP3.2: Ingest leads via authenticated API with JSON payload.
      */
-    @POST
-    @Path("/api")
-    @Consumes(MediaType.APPLICATION_JSON)
+    @PostMapping("/api")
     @Operation(summary = "Bulk ingest leads via API (LP3.2)")
-    public Response ingestViaApi(
-        List<BulkIngestRequest> records,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> ingestViaApi(
+        @RequestBody List<BulkIngestRequest> records,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         if (records == null || records.isEmpty()) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                .entity("{\"error\":\"At least one record is required\"}")
-                .build();
+            return ResponseEntity.badRequest().body("{\"error\":\"At least one record is required\"}");
         }
 
         BulkIngestionResponse result = bulkIngestionService.ingestFromApi(records, userId);
-        return Response.ok(result).build();
-    }
-
-    // -------------------------------------------------------
-    // Multipart form holder
-    // -------------------------------------------------------
-
-    public static class ExcelUploadForm {
-        @RestForm("file")
-        @PartType(MediaType.APPLICATION_OCTET_STREAM)
-        public InputStream file;
+        return ResponseEntity.ok(result);
     }
 }

@@ -7,48 +7,51 @@ import com.sf.leasing.lead.api.dto.response.ProspectResponse;
 import com.sf.leasing.lead.domain.enums.ProspectStatus;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.exception.ErrorCodes;
-import com.sf.leasing.lead.domain.model.Lineage;
 import com.sf.leasing.lead.domain.model.Prospect;
+import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
 import com.sf.leasing.lead.service.ProspectPromotionService;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Path("/api/v1")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1")
 @Tag(name = "Prospect", description = "PP1/LP8: Prospect lifecycle management")
 public class ProspectResource {
 
-    @Inject
-    ProspectPromotionService promotionService;
+    private final ProspectPromotionService promotionService;
+    private final ProspectRepository prospectRepository;
+
+    public ProspectResource(ProspectPromotionService promotionService,
+                            ProspectRepository prospectRepository) {
+        this.promotionService = promotionService;
+        this.prospectRepository = prospectRepository;
+    }
 
     /**
      * POST /api/v1/leads/{lrn}/promote
      * LP8 → PP1: Run 17-point qualification checklist and promote lead to DRAFT Prospect.
      */
-    @POST
-    @Path("/leads/{lrn}/promote")
+    @PostMapping("/leads/{lrn}/promote")
     @Operation(summary = "Promote a qualified lead to a Prospect (LP8/PP1)")
-    public Response promoteToProspect(
-        @PathParam("lrn") String lrn,
-        @Valid PromoteToProspectRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> promoteToProspect(
+        @PathVariable("lrn") String lrn,
+        @Valid @RequestBody PromoteToProspectRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         String promotedBy = req != null && req.promotedBy != null ? req.promotedBy : userId;
         ProspectPromotionResponse response = promotionService.promote(lrn, promotedBy);
-        return Response.status(Response.Status.CREATED).entity(response).build();
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     /**
@@ -56,77 +59,69 @@ public class ProspectResource {
      * PP1: Retrieve prospect with PAN/GSTIN masking and lineage.
      * prospectId may be the UUID (system) or the business ID (PR-YYYY-NNNNNN).
      */
-    @GET
-    @Path("/prospects/{prospectId}")
+    @GetMapping("/prospects/{prospectId}")
     @Operation(summary = "Get prospect details with masked KYC identifiers (PP1)")
-    public Response getProspect(
-        @PathParam("prospectId") String prospectId,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> getProspect(
+        @PathVariable("prospectId") String prospectId,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
         Prospect prospect = resolveProspect(prospectId);
         if (prospect == null) {
-            return Response.status(Response.Status.NOT_FOUND)
-                .entity("{\"error\":\"Prospect not found: " + prospectId + "\"}").build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body("{\"error\":\"Prospect not found: " + prospectId + "\"}");
         }
 
         ProspectResponse body = ProspectResponse.from(prospect);
-
-        // Attach lineage info
-        Lineage lineage = Lineage.findByProspectUuid(prospect.id);
-        // lineage.leadLrn and lineage.prospectBusinessId are already reflected in ProspectResponse
-
-        return Response.ok(body).build();
+        return ResponseEntity.ok(body);
     }
 
     /**
      * GET /api/v1/leads/{lrn}/prospect
      * PP1: Retrieve prospect linked to a Lead via LRN (lineage view).
      */
-    @GET
-    @Path("/leads/{lrn}/prospect")
+    @GetMapping("/leads/{lrn}/prospect")
     @Operation(summary = "Get prospect linked to a lead (lineage view, PP1)")
-    public Response getProspectByLrn(
-        @PathParam("lrn") String lrn,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> getProspectByLrn(
+        @PathVariable("lrn") String lrn,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        Prospect prospect = Prospect.findByLeadLrn(lrn);
+        Prospect prospect = prospectRepository.findByLeadLrn(lrn).orElse(null);
         if (prospect == null) {
-            return Response.status(Response.Status.NOT_FOUND)
-                .entity("{\"error\":\"No prospect found for LRN: " + lrn + "\"}").build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body("{\"error\":\"No prospect found for LRN: " + lrn + "\"}");
         }
 
-        return Response.ok(ProspectResponse.from(prospect)).build();
+        return ResponseEntity.ok(ProspectResponse.from(prospect));
     }
 
     /**
      * POST /api/v1/prospects/{prospectId}/close
      * Close a prospect with mandatory reason code.
      */
-    @POST
-    @Path("/prospects/{prospectId}/close")
+    @PostMapping("/prospects/{prospectId}/close")
     @Transactional
     @Operation(summary = "Close a prospect with reason (PP1)")
-    public Response closeProspect(
-        @PathParam("prospectId") String prospectId,
-        @Valid CloseProspectRequest req,
-        @HeaderParam("X-User-Id") String userId
+    public ResponseEntity<?> closeProspect(
+        @PathVariable("prospectId") String prospectId,
+        @Valid @RequestBody CloseProspectRequest req,
+        @RequestHeader("X-User-Id") String userId
     ) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
         Prospect prospect = resolveProspect(prospectId);
         if (prospect == null) {
-            return Response.status(Response.Status.NOT_FOUND)
-                .entity("{\"error\":\"Prospect not found: " + prospectId + "\"}").build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body("{\"error\":\"Prospect not found: " + prospectId + "\"}");
         }
         if (prospect.isClosed()) {
             throw new BusinessException(ErrorCodes.PROSPECT_ALREADY_CLOSED,
@@ -141,7 +136,9 @@ public class ProspectResource {
         prospect.updatedBy         = userId;
         prospect.updatedAt         = LocalDateTime.now();
 
-        return Response.ok("{\"message\":\"Prospect closed.\"}").build();
+        prospectRepository.save(prospect);
+
+        return ResponseEntity.ok("{\"message\":\"Prospect closed.\"}");
     }
 
     // -------------------------------------------------------
@@ -149,13 +146,13 @@ public class ProspectResource {
     private Prospect resolveProspect(String id) {
         // Try business ID first (PR-YYYY-NNNNNN)
         if (id.startsWith("PR-")) {
-            return Prospect.findByProspectId(id);
+            return prospectRepository.findByProspectId(id).orElse(null);
         }
         // Try UUID
         try {
-            return Prospect.findById(UUID.fromString(id));
+            return prospectRepository.findById(UUID.fromString(id)).orElse(null);
         } catch (IllegalArgumentException e) {
-            return Prospect.findByProspectId(id);
+            return prospectRepository.findByProspectId(id).orElse(null);
         }
     }
 }

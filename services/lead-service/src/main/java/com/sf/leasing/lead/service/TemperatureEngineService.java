@@ -6,12 +6,15 @@ import com.sf.leasing.lead.domain.enums.LeadTemperature;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.domain.model.TemperatureAudit;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
+import com.sf.leasing.lead.infrastructure.persistence.TemperatureAuditRepository;
 import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -24,22 +27,31 @@ import java.util.List;
  * LP7.3 — Manual override with mandatory reason code + audit trail.
  * LP7.4 — Closure suggestion when N unanswered attempts accumulate.
  */
-@ApplicationScoped
+@Service
 public class TemperatureEngineService {
 
-    private static final Logger LOG = Logger.getLogger(TemperatureEngineService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(TemperatureEngineService.class);
 
-    @ConfigProperty(name = "temperature.hot-warn-days", defaultValue = "7")
+    @Value("${temperature.hot-warn-days:7}")
     int hotWarnDays;
 
-    @ConfigProperty(name = "temperature.warm-cold-days", defaultValue = "14")
+    @Value("${temperature.warm-cold-days:14}")
     int warmColdDays;
 
-    @ConfigProperty(name = "temperature.unanswered-closure-threshold", defaultValue = "5")
+    @Value("${temperature.unanswered-closure-threshold:5}")
     int closureThreshold;
 
-    @Inject
+    @PersistenceContext
     EntityManager em;
+
+    private final LeadRepository leadRepository;
+    private final TemperatureAuditRepository temperatureAuditRepository;
+
+    public TemperatureEngineService(LeadRepository leadRepository,
+                                    TemperatureAuditRepository temperatureAuditRepository) {
+        this.leadRepository = leadRepository;
+        this.temperatureAuditRepository = temperatureAuditRepository;
+    }
 
     // -------------------------------------------------------
     // LP7.3: Manual temperature override
@@ -47,8 +59,8 @@ public class TemperatureEngineService {
 
     @Transactional
     public void overrideTemperature(String lrn, OverrideTemperatureRequest req, String userId) {
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) throw new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn);
+        Lead lead = leadRepository.findByLrn(lrn).orElseThrow(
+            () -> new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn));
         if (lead.isClosed()) throw new BusinessException("LEAD_CLOSED", "Cannot override temperature on a closed lead.");
 
         LeadTemperature previous = lead.temperature;
@@ -61,7 +73,9 @@ public class TemperatureEngineService {
         lead.updatedBy               = userId;
         lead.updatedAt               = LocalDateTime.now();
 
-        LOG.infof("Temperature manually overridden: LRN=%s %s→%s by %s reason=%s",
+        leadRepository.save(lead);
+
+        LOG.info("Temperature manually overridden: LRN={} {}→{} by {} reason={}",
             lrn, previous, req.temperature, userId, req.reasonCode);
     }
 
@@ -112,7 +126,7 @@ public class TemperatureEngineService {
                 "TEMP_DEGRADATION", "Hot→Warm: no activity for " + hotWarnDays + " days");
         }
         if (!hotLeads.isEmpty()) {
-            LOG.infof("Temperature degradation: %d leads degraded HOT→WARM", hotLeads.size());
+            LOG.info("Temperature degradation: {} leads degraded HOT→WARM", hotLeads.size());
         }
     }
 
@@ -131,7 +145,7 @@ public class TemperatureEngineService {
                 "TEMP_DEGRADATION", "Warm→Cold: no activity for " + warmColdDays + " days");
         }
         if (!warmLeads.isEmpty()) {
-            LOG.infof("Temperature degradation: %d leads degraded WARM→COLD", warmLeads.size());
+            LOG.info("Temperature degradation: {} leads degraded WARM→COLD", warmLeads.size());
         }
     }
 
@@ -150,10 +164,10 @@ public class TemperatureEngineService {
         ).setParameter(1, closureThreshold).getResultList();
 
         for (Object[] row : staleLeads) {
-            LOG.infof("LP7.4 closure suggestion: LRN=%s attempts=%s", row[1], row[2]);
+            LOG.info("LP7.4 closure suggestion: LRN={} attempts={}", row[1], row[2]);
         }
         if (!staleLeads.isEmpty()) {
-            LOG.infof("Closure suggestion flagged for %d stale leads (threshold=%d attempts)",
+            LOG.info("Closure suggestion flagged for {} stale leads (threshold={} attempts)",
                 staleLeads.size(), closureThreshold);
         }
     }
@@ -202,7 +216,7 @@ public class TemperatureEngineService {
         audit.suggestedBy         = suggestedBy;
         audit.changedBy           = changedBy;
         audit.changedAt           = LocalDateTime.now();
-        audit.persist();
+        temperatureAuditRepository.save(audit);
     }
 
     private LocalDateTime getLastActivityTime(Lead lead) {

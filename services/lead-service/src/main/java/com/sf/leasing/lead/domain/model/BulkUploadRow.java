@@ -1,13 +1,12 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "bulk_upload_rows")
-public class BulkUploadRow extends PanacheEntityBase {
+public class BulkUploadRow {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

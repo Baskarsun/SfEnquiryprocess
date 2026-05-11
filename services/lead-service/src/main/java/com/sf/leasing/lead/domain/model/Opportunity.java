@@ -1,16 +1,14 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.OpportunityStatus;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "opportunities")
-public class Opportunity extends PanacheEntityBase {
+public class Opportunity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -50,27 +48,4 @@ public class Opportunity extends PanacheEntityBase {
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
 
-    @OneToMany
-    @JoinColumn(name = "opportunity_id", referencedColumnName = "id")
-    public List<Quote> quotes;
-
-    public static Opportunity findByOpportunityId(String opportunityId) {
-        return find("opportunityId", opportunityId).firstResult();
-    }
-
-    public static List<Opportunity> findByProspect(UUID prospectUuid) {
-        return list("prospectUuid", prospectUuid);
-    }
-
-    public static Opportunity findByProspectAndLob(UUID prospectUuid, String lobTag) {
-        return find("prospectUuid = ?1 AND lobTag = ?2", prospectUuid, lobTag).firstResult();
-    }
-
-    public static boolean existsForProspectAndCategory(UUID prospectUuid,
-                                                        String assetCategory,
-                                                        String assetClass,
-                                                        String lobTag) {
-        return count("prospectUuid = ?1 AND assetCategory = ?2 AND assetClass = ?3 AND lobTag = ?4",
-            prospectUuid, assetCategory, assetClass, lobTag) > 0;
-    }
 }

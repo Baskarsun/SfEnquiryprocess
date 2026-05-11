@@ -4,15 +4,17 @@ import com.sf.leasing.lead.api.dto.request.AssignLeadRequest;
 import com.sf.leasing.lead.domain.enums.HierarchyLevel;
 import com.sf.leasing.lead.domain.enums.LeadStatus;
 import com.sf.leasing.lead.domain.exception.BusinessException;
-import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.domain.model.LeadAssignment;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
+import com.sf.leasing.lead.infrastructure.persistence.LeadAssignmentRepository;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
 import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,34 +22,39 @@ import java.util.List;
 /**
  * Implements LP5: Lead Assignment & Re-assignment (4-level hierarchy).
  */
-@ApplicationScoped
+@Service
 public class AssignmentService {
 
-    private static final Logger LOG = Logger.getLogger(AssignmentService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(AssignmentService.class);
 
-    @Inject
-    EntityManager em;
+    private final LeadRepository leadRepository;
+    private final LeadAssignmentRepository assignmentRepository;
+    private final LeadEventProducer eventProducer;
+    private final NotificationService notificationService;
 
-    @Inject
-    LeadEventProducer eventProducer;
+    @PersistenceContext
+    private EntityManager em;
 
-    @Inject
-    NotificationService notificationService;
+    public AssignmentService(LeadRepository leadRepository,
+                              LeadAssignmentRepository assignmentRepository,
+                              LeadEventProducer eventProducer,
+                              NotificationService notificationService) {
+        this.leadRepository = leadRepository;
+        this.assignmentRepository = assignmentRepository;
+        this.eventProducer = eventProducer;
+        this.notificationService = notificationService;
+    }
 
     @Transactional
     public void assignLead(String lrn, AssignLeadRequest req, String assignedBy) {
 
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) {
-            throw new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn);
-        }
+        Lead lead = leadRepository.findByLrn(lrn)
+            .orElseThrow(() -> new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn));
 
-        // Closed leads cannot be re-assigned
         if (lead.isClosed()) {
             throw new BusinessException("LEAD_CLOSED", "Assignment not permitted on a closed lead.");
         }
 
-        // Rule LP5.2: Remarks and reason code are mandatory
         if (isBlank(req.reasonCode)) {
             throw new BusinessException("REMARKS_REQUIRED", "Reason code is mandatory for assignment.");
         }
@@ -55,7 +62,6 @@ public class AssignmentService {
             throw new BusinessException("REMARKS_REQUIRED", "Remarks are mandatory for assignment.");
         }
 
-        // Rule LP5.3: Branch change after initial assignment requires exception flow
         if (!isBlank(lead.assignedBranchCode)
             && !isBlank(req.branchCode)
             && !lead.assignedBranchCode.equals(req.branchCode)) {
@@ -65,21 +71,18 @@ public class AssignmentService {
             }
         }
 
-        // Rule LP5.5: If assigning to an FO who is on leave — auto-escalate to branch manager
         String effectiveUserId = req.assignToUserId;
         HierarchyLevel effectiveLevel = req.hierarchyLevel;
 
         if (req.hierarchyLevel == HierarchyLevel.FIELD_OFFICER && isEmployeeOnLeave(req.assignToUserId)) {
-            LOG.warnf("FO %s is on leave — escalating lead %s to Branch Manager", req.assignToUserId, lrn);
+            LOG.warn("FO {} is on leave — escalating lead {} to Branch Manager", req.assignToUserId, lrn);
             effectiveUserId = findBranchManager(req.branchCode);
             effectiveLevel  = HierarchyLevel.BRANCH_MANAGER;
             notificationService.notifyFoAbsenceEscalation(lrn, req.assignToUserId, effectiveUserId);
         }
 
-        // Compute SLA deadline (configurable per level)
         LocalDateTime slaDeadline = computeSlaDeadline(effectiveLevel);
 
-        // Create immutable audit record
         LeadAssignment assignment = new LeadAssignment();
         assignment.lead                 = lead;
         assignment.assignedToUserId     = effectiveUserId;
@@ -93,9 +96,8 @@ public class AssignmentService {
         assignment.assignedBy           = assignedBy;
         assignment.assignedAt           = LocalDateTime.now();
         assignment.slaDeadline          = slaDeadline;
-        assignment.persist();
+        assignmentRepository.save(assignment);
 
-        // Update lead's current assignment
         lead.assignedUserId           = effectiveUserId;
         lead.assignedTeam             = req.assignToTeam;
         lead.assignedBranchCode       = req.branchCode;
@@ -103,20 +105,15 @@ public class AssignmentService {
         lead.updatedBy                = assignedBy;
         lead.updatedAt                = LocalDateTime.now();
 
-        // Transition status from NEW to ASSIGNED if still new
         if (lead.status == LeadStatus.NEW) {
             lead.status = LeadStatus.ASSIGNED;
         }
 
         eventProducer.publishLeadAssigned(lrn, effectiveUserId, effectiveLevel.name());
-        LOG.infof("Lead %s assigned to %s (%s) by %s; SLA deadline: %s",
+        LOG.info("Lead {} assigned to {} ({}) by {}; SLA deadline: {}",
             lrn, effectiveUserId, effectiveLevel, assignedBy, slaDeadline);
     }
 
-    /**
-     * Checks open SLA timers and marks breaches; escalates to next-level manager.
-     * Rule LP5.4: Called by scheduled job hourly.
-     */
     @Transactional
     public void checkAndMarkSlaBreaches() {
         List<Object[]> breached = em.createNativeQuery(
@@ -135,13 +132,9 @@ public class AssignmentService {
 
             String lrn = findLrnForLead(row[1].toString());
             notificationService.notifySlaBreached(lrn, row[2].toString(), row[3].toString());
-            LOG.infof("SLA breached for lead %s, assigned to %s at level %s", lrn, row[2], row[3]);
+            LOG.info("SLA breached for lead {}, assigned to {} at level {}", lrn, row[2], row[3]);
         }
     }
-
-    // -------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------
 
     private boolean isEmployeeOnLeave(String userId) {
         List<Object[]> rows = em.createNativeQuery(

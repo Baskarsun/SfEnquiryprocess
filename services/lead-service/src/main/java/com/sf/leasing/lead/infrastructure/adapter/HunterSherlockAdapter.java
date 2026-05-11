@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * PP7.4 / PP7.9: Triggers Hunter and Sherlock fraud screening for an application.
@@ -11,15 +12,15 @@ import org.jboss.logging.Logger;
  * suppressed (non-blocking). When the fraud service is inactive the CIBIL
  * adapter is called directly for individual lessees (see FraudScreeningService).
  */
-@ApplicationScoped
+@Component
 public class HunterSherlockAdapter {
 
-    private static final Logger LOG = Logger.getLogger(HunterSherlockAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(HunterSherlockAdapter.class);
 
-    @ConfigProperty(name = "adapters.hunter-sherlock.stub-mode", defaultValue = "true")
+    @Value("${adapters.hunter-sherlock.stub-mode:true}")
     boolean stubMode;
 
-    @ConfigProperty(name = "fraud-service.active", defaultValue = "true")
+    @Value("${fraud-service.active:true}")
     boolean fraudServiceActive;
 
     public boolean isFraudServiceActive() {
@@ -34,20 +35,20 @@ public class HunterSherlockAdapter {
      */
     public FraudScreeningResult screen(String applicationId, String panOrGstin, boolean individual) {
         if (!fraudServiceActive) {
-            LOG.infof("HunterSherlockAdapter: fraud service inactive for APP=%s", applicationId);
+            LOG.info("HunterSherlockAdapter: fraud service inactive for APP={}", applicationId);
             return FraudScreeningResult.serviceInactive();
         }
         if (stubMode) {
-            LOG.debugf("HunterSherlockAdapter stub: returning CLEAR for APP=%s", applicationId);
+            LOG.debug("HunterSherlockAdapter stub: returning CLEAR for APP={}", applicationId);
             return FraudScreeningResult.clear();
         }
         try {
             // TODO: wire to real Hunter + Sherlock REST endpoints
-            LOG.infof("HunterSherlockAdapter: screening APP=%s pan/gstin=%s", applicationId, mask(panOrGstin));
+            LOG.info("HunterSherlockAdapter: screening APP={} pan/gstin={}", applicationId, mask(panOrGstin));
             return FraudScreeningResult.clear();
         } catch (Exception e) {
             // Parse error → default to PENDING per risk mitigation R5
-            LOG.warnf("HunterSherlockAdapter: screening failed for APP=%s (%s); defaulting to PENDING",
+            LOG.warn("HunterSherlockAdapter: screening failed for APP={} ({}); defaulting to PENDING",
                 applicationId, e.getMessage());
             return FraudScreeningResult.parseError(e.getMessage());
         }

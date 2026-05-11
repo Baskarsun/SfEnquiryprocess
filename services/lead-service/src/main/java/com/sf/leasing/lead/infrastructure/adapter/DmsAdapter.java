@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * PP7.4: Routes KYC document uploads to the DMS (Document Management System).
@@ -14,24 +15,24 @@ import org.jboss.logging.Logger;
  *
  * Returns the DMS document index on success; throws on failure (caller queues retry).
  */
-@ApplicationScoped
+@Component
 public class DmsAdapter {
 
-    private static final Logger LOG = Logger.getLogger(DmsAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(DmsAdapter.class);
 
-    @ConfigProperty(name = "adapters.dms.stub-mode", defaultValue = "true")
+    @Value("${adapters.dms.stub-mode:true}")
     boolean stubMode;
 
-    @ConfigProperty(name = "env.indicator", defaultValue = "T")
+    @Value("${env.indicator:T}")
     String envIndicator;
 
-    @ConfigProperty(name = "adapters.dms.url.test",  defaultValue = "https://dms-test.stub.local")
+    @Value("${adapters.dms.url.test:https://dms-test.stub.local}")
     String testUrl;
 
-    @ConfigProperty(name = "adapters.dms.url.beta",  defaultValue = "https://dms-beta.stub.local")
+    @Value("${adapters.dms.url.beta:https://dms-beta.stub.local}")
     String betaUrl;
 
-    @ConfigProperty(name = "adapters.dms.url.live",  defaultValue = "https://dms-live.stub.local")
+    @Value("${adapters.dms.url.live:https://dms-live.stub.local}")
     String liveUrl;
 
     public String getActiveEnvironment() {
@@ -56,16 +57,16 @@ public class DmsAdapter {
         String endpoint = resolveEndpoint();
         if (stubMode) {
             String index = "DMS-" + envIndicator + "-" + applicationId + "-" + documentType + "-" + applicantPrefix;
-            LOG.debugf("DmsAdapter stub (%s): returning index %s", endpoint, index);
+            LOG.debug("DmsAdapter stub ({}): returning index {}", endpoint, index);
             return index;
         }
         try {
             // TODO: wire to real DMS REST endpoint
             // POST {endpoint}/documents with multipart form data
-            LOG.infof("DmsAdapter: uploading %s/%s for APP=%s to %s", documentType, applicantPrefix, applicationId, endpoint);
+            LOG.info("DmsAdapter: uploading {}/{} for APP={} to {}", documentType, applicantPrefix, applicationId, endpoint);
             return "DMS-" + System.currentTimeMillis() + "-" + applicationId;
         } catch (Exception e) {
-            LOG.errorf("DmsAdapter: upload failed for APP=%s doc=%s (%s)", applicationId, documentType, e.getMessage());
+            LOG.error("DmsAdapter: upload failed for APP={} doc={} ({})", applicationId, documentType, e.getMessage());
             throw new RuntimeException("DMS upload failed: " + e.getMessage(), e);
         }
     }

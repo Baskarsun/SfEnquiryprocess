@@ -1,14 +1,12 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "lead_dedup_results")
-public class LeadDedupResult extends PanacheEntityBase {
+public class LeadDedupResult {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -36,7 +34,5 @@ public class LeadDedupResult extends PanacheEntityBase {
     @Column(name = "checked_at", nullable = false)
     public LocalDateTime checkedAt = LocalDateTime.now();
 
-    public static List<LeadDedupResult> findByLeadId(UUID leadId) {
-        return find("lead.id", leadId).list();
-    }
+
 }

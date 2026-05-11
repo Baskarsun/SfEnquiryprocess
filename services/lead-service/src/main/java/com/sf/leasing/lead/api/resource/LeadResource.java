@@ -3,106 +3,115 @@ package com.sf.leasing.lead.api.resource;
 import com.sf.leasing.lead.api.dto.request.CreateLeadRequest;
 import com.sf.leasing.lead.api.dto.response.CreateLeadResponse;
 import com.sf.leasing.lead.domain.enums.Channel;
+import com.sf.leasing.lead.domain.enums.LeadStatus;
+import com.sf.leasing.lead.domain.enums.LeadTemperature;
 import com.sf.leasing.lead.domain.model.Lead;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
 import com.sf.leasing.lead.service.LeadCreationService;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
-@Path("/api/v1/leads")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
+@RestController
+@RequestMapping("/api/v1/leads")
 @Tag(name = "Lead Management", description = "LP1-LP2: Lead creation and retrieval")
 public class LeadResource {
 
-    @Inject
-    LeadCreationService leadCreationService;
+    private static final int MAX_PAGE_SIZE = 100;
 
-    /**
-     * POST /api/v1/leads
-     * LP1 + LP2: Authenticate user, then create lead record.
-     * Headers:
-     *   X-User-Id        — authenticated user ID (from API gateway JWT extraction)
-     *   X-Device-Id      — primary device IMEI or UUID
-     *   X-Device-Id-Alt  — secondary device identifier
-     *   X-Channel        — MOBILE | DESKTOP | API | BULK
-     *   X-GPS-Lat        — latitude (MOBILE with GPS active)
-     *   X-GPS-Lon        — longitude (MOBILE with GPS active)
-     */
-    @POST
+    private final LeadCreationService leadCreationService;
+    private final LeadRepository leadRepository;
+
+    public LeadResource(LeadCreationService leadCreationService,
+                        LeadRepository leadRepository) {
+        this.leadCreationService = leadCreationService;
+        this.leadRepository = leadRepository;
+    }
+
+    @PostMapping
     @Operation(summary = "Create a new leasing lead (LP1 + LP2)")
-    public Response createLead(
-        @Valid CreateLeadRequest req,
-        @HeaderParam("X-User-Id")       String userId,
-        @HeaderParam("X-Device-Id")     String primaryDeviceId,
-        @HeaderParam("X-Device-Id-Alt") String secondaryDeviceId,
-        @HeaderParam("X-Channel")       String channelHeader,
-        @HeaderParam("X-GPS-Lat")       Double latitude,
-        @HeaderParam("X-GPS-Lon")       Double longitude
-    ) {
-        // LP1: Authenticate
+    public ResponseEntity<CreateLeadResponse> createLead(
+            @Valid @RequestBody CreateLeadRequest req,
+            @RequestHeader("X-User-Id")                          String userId,
+            @RequestHeader("X-Device-Id")                        String primaryDeviceId,
+            @RequestHeader(value = "X-Device-Id-Alt", required = false) String secondaryDeviceId,
+            @RequestHeader(value = "X-Channel", defaultValue = "DESKTOP") String channelHeader,
+            @RequestHeader(value = "X-GPS-Lat", required = false) Double latitude,
+            @RequestHeader(value = "X-GPS-Lon", required = false) Double longitude) {
+
         leadCreationService.validateUserAndDevice(userId, primaryDeviceId, secondaryDeviceId);
-
         Channel channel = parseChannel(channelHeader);
-
-        // LP2: Create lead
         CreateLeadResponse result = leadCreationService.createLead(req, userId, channel, latitude, longitude);
 
-        if (result.routedToExceptionQueue) {
-            return Response.accepted(result).build();   // 202 — routed to exception queue
-        }
-        return Response.status(Response.Status.CREATED).entity(result).build();  // 201
+        return result.routedToExceptionQueue
+            ? ResponseEntity.accepted().body(result)
+            : ResponseEntity.status(HttpStatus.CREATED).body(result);
     }
 
-    @GET
-    @Path("/{lrn}")
+    @GetMapping("/{lrn}")
     @Operation(summary = "Get lead by LRN")
-    public Response getLeadByLrn(
-        @PathParam("lrn") String lrn,
-        @HeaderParam("X-User-Id") String userId
-    ) {
+    public ResponseEntity<Lead> getLeadByLrn(
+            @PathVariable String lrn,
+            @RequestHeader("X-User-Id") String userId) {
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) {
-            return Response.status(Response.Status.NOT_FOUND).build();
-        }
-        return Response.ok(lead).build();
+        return leadRepository.findByLrn(lrn)
+            .map(ResponseEntity::ok)
+            .orElse(ResponseEntity.notFound().build());
     }
 
-    @GET
+    @GetMapping
     @Operation(summary = "Search leads by status, assigned user, or branch")
-    public Response searchLeads(
-        @QueryParam("status")      String status,
-        @QueryParam("assignedTo")  String assignedTo,
-        @QueryParam("branchCode")  String branchCode,
-        @QueryParam("temperature") String temperature,
-        @QueryParam("page")        @DefaultValue("0")  int page,
-        @QueryParam("size")        @DefaultValue("20") int size,
-        @HeaderParam("X-User-Id") String userId
-    ) {
+    public ResponseEntity<?> searchLeads(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String assignedTo,
+            @RequestParam(required = false) String branchCode,
+            @RequestParam(required = false) String temperature,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestHeader("X-User-Id") String userId) {
+
         if (userId == null || userId.isBlank()) {
-            return Response.status(Response.Status.UNAUTHORIZED).build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        if (page < 0) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", "page must be >= 0"));
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            return ResponseEntity.badRequest()
+                .body(java.util.Map.of("error", "size must be between 1 and " + MAX_PAGE_SIZE));
         }
 
-        StringBuilder query = new StringBuilder("1=1");
-        if (status      != null) query.append(" AND status = '").append(status).append("'");
-        if (assignedTo  != null) query.append(" AND assignedUserId = '").append(assignedTo).append("'");
-        if (branchCode  != null) query.append(" AND assignedBranchCode = '").append(branchCode).append("'");
-        if (temperature != null) query.append(" AND temperature = '").append(temperature).append("'");
+        LeadStatus parsedStatus = null;
+        if (status != null) {
+            try {
+                parsedStatus = LeadStatus.valueOf(status.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest()
+                    .body(java.util.Map.of("error", "Invalid status value. Allowed: NEW, ASSIGNED, IN_PROGRESS, PROMOTED, CLOSED"));
+            }
+        }
 
-        List<Lead> leads = Lead.find(query.toString())
-            .page(page, size)
-            .list();
+        LeadTemperature parsedTemp = null;
+        if (temperature != null) {
+            try {
+                parsedTemp = LeadTemperature.valueOf(temperature.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest()
+                    .body(java.util.Map.of("error", "Invalid temperature value. Allowed: HOT, WARM, COLD"));
+            }
+        }
 
-        return Response.ok(leads).build();
+        Pageable pageable = PageRequest.of(page, Math.min(size, MAX_PAGE_SIZE));
+        Page<Lead> results = leadRepository.search(parsedStatus, assignedTo, branchCode, parsedTemp, pageable);
+        return ResponseEntity.ok(results);
     }
 
     private Channel parseChannel(String header) {

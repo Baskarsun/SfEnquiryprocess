@@ -1,14 +1,13 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.InteractionType;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "interactions")
-public class Interaction extends PanacheEntityBase {
+public class Interaction {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

@@ -1,8 +1,9 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * PP7.7: Submits CIBIL bureau request for individual lessees.
@@ -11,16 +12,16 @@ import org.jboss.logging.Logger;
  * Non-2xx: log indicator "Credit Bureau Request not Submitted"; transaction continues.
  * Called for individual lessees only.
  */
-@ApplicationScoped
+@Component
 public class CibilAdapter {
 
-    private static final Logger LOG = Logger.getLogger(CibilAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CibilAdapter.class);
     private static final String NOT_SUBMITTED_LOG = "Credit Bureau Request not Submitted";
 
-    @ConfigProperty(name = "adapters.cibil.stub-mode", defaultValue = "true")
+    @Value("${adapters.cibil.stub-mode:true}")
     boolean stubMode;
 
-    @ConfigProperty(name = "adapters.cibil.base-url", defaultValue = "https://cibil.stub.local")
+    @Value("${adapters.cibil.base-url:https://cibil.stub.local}")
     String baseUrl;
 
     /**
@@ -30,18 +31,18 @@ public class CibilAdapter {
     public String submitRequest(String applicationId, String pan, String name, String dateOfBirth) {
         if (stubMode) {
             String ref = "CIBIL-STUB-" + applicationId;
-            LOG.debugf("CibilAdapter stub: returning reference %s", ref);
+            LOG.debug("CibilAdapter stub: returning reference {}", ref);
             return ref;
         }
         try {
             // TODO: wire to real CIBIL REST endpoint
             // GET {baseUrl}/bureau/request?pan={pan}&name={name}&dob={dob}&appId={appId}
-            LOG.infof("CibilAdapter: submitting CIBIL request for APP=%s", applicationId);
+            LOG.info("CibilAdapter: submitting CIBIL request for APP={}", applicationId);
             String reference = "CIBIL-" + System.currentTimeMillis();
-            LOG.infof("CibilAdapter: CIBIL reference=%s for APP=%s", reference, applicationId);
+            LOG.info("CibilAdapter: CIBIL reference={} for APP={}", reference, applicationId);
             return reference;
         } catch (Exception e) {
-            LOG.warnf("CibilAdapter: %s for APP=%s (%s)", NOT_SUBMITTED_LOG, applicationId, e.getMessage());
+            LOG.warn("CibilAdapter: {} for APP={} ({})", NOT_SUBMITTED_LOG, applicationId, e.getMessage());
             return null;
         }
     }

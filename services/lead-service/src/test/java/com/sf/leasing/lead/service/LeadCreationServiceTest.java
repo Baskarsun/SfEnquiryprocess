@@ -10,13 +10,14 @@ import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import io.quarkus.test.InjectMock;
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicantRepository;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
@@ -24,23 +25,31 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 
-@QuarkusTest
+@ExtendWith(MockitoExtension.class)
 class LeadCreationServiceTest {
 
-    @Inject
+    @Mock RedisSequenceGenerator sequenceGenerator;
+    @Mock LeadEventProducer eventProducer;
+    @Mock ExceptionQueueService exceptionQueueService;
+    @Mock DeduplicationService deduplicationService;
+    @Mock GeographicValidationService geographicValidationService;
+    @Mock LeadRepository leadRepository;
+    @Mock ApplicantRepository applicantRepository;
+
     LeadCreationService service;
-
-    @InjectMock
-    RedisSequenceGenerator sequenceGenerator;
-
-    @InjectMock
-    LeadEventProducer eventProducer;
 
     @BeforeEach
     void setUp() {
+        service = new LeadCreationService(
+            sequenceGenerator, exceptionQueueService, deduplicationService,
+            geographicValidationService, eventProducer, leadRepository, applicantRepository
+        );
         when(sequenceGenerator.generateLrn(any())).thenReturn("LS-202604-000001");
         when(sequenceGenerator.generateTempCustomerNumber()).thenReturn("TMP-2026-000001");
         Mockito.doNothing().when(eventProducer).publishLeadCreated(any(), any(), any(), any());
+        when(leadRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(applicantRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(geographicValidationService.validatePincodeBranch(any(), any(), any())).thenReturn(true);
     }
 
     @Test
@@ -87,6 +96,9 @@ class LeadCreationServiceTest {
         req.applicants.get(0).gstin  = null;
         req.applicants.get(0).addressLine1 = null;
 
+        when(exceptionQueueService.routeToExceptionQueue(any(), any(), any(), any(), any(), any()))
+            .thenReturn(null);
+
         CreateLeadResponse response = service.createLead(req, "EMP003", Channel.DESKTOP, null, null);
         assertTrue(response.routedToExceptionQueue);
     }
@@ -98,10 +110,6 @@ class LeadCreationServiceTest {
         assertEquals(ErrorCodes.INVALID_USER, ex.getErrorCode());
     }
 
-    // -------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------
-
     private CreateLeadRequest buildIndividualRequest() {
         CreateLeadRequest req = new CreateLeadRequest();
         req.leadType       = LeadType.INDIVIDUAL;
@@ -109,8 +117,8 @@ class LeadCreationServiceTest {
         req.sourceName     = "Walk-In-2026";
 
         ApplicantRequest applicant = new ApplicantRequest();
-        applicant.applicantName = "John Doe";
-        applicant.mobile        = "9876543210";
+        applicant.applicantName    = "John Doe";
+        applicant.mobile           = "9876543210";
         applicant.constitutionType = "INDIVIDUAL";
         req.applicants = List.of(applicant);
         return req;

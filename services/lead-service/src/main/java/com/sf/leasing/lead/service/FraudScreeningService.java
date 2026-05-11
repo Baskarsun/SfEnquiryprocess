@@ -1,17 +1,16 @@
 package com.sf.leasing.lead.service;
 
 import com.sf.leasing.lead.domain.enums.ApplicationStatus;
-import com.sf.leasing.lead.domain.enums.CamStatus;
 import com.sf.leasing.lead.domain.model.Application;
-import com.sf.leasing.lead.domain.model.CamWorkflow;
 import com.sf.leasing.lead.infrastructure.adapter.CibilAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.HunterSherlockAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.HunterSherlockAdapter.FraudScreeningResult;
 import com.sf.leasing.lead.infrastructure.messaging.LeadEventProducer;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import org.jboss.logging.Logger;
+import com.sf.leasing.lead.infrastructure.persistence.ApplicationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -24,22 +23,28 @@ import java.time.LocalDateTime;
  *   - Non-clear → Application → PENDING; fraud message logged; manual review triggered.
  *   - Fraud service inactive → call CIBIL directly for individual lessees.
  */
-@ApplicationScoped
+@Service
 public class FraudScreeningService {
 
-    private static final Logger LOG = Logger.getLogger(FraudScreeningService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(FraudScreeningService.class);
 
-    @Inject
-    HunterSherlockAdapter hunterSherlockAdapter;
+    private final HunterSherlockAdapter hunterSherlockAdapter;
+    private final CibilAdapter cibilAdapter;
+    private final NotificationService notificationService;
+    private final LeadEventProducer eventProducer;
+    private final ApplicationRepository applicationRepository;
 
-    @Inject
-    CibilAdapter cibilAdapter;
-
-    @Inject
-    NotificationService notificationService;
-
-    @Inject
-    LeadEventProducer eventProducer;
+    public FraudScreeningService(HunterSherlockAdapter hunterSherlockAdapter,
+                                  CibilAdapter cibilAdapter,
+                                  NotificationService notificationService,
+                                  LeadEventProducer eventProducer,
+                                  ApplicationRepository applicationRepository) {
+        this.hunterSherlockAdapter = hunterSherlockAdapter;
+        this.cibilAdapter = cibilAdapter;
+        this.notificationService = notificationService;
+        this.eventProducer = eventProducer;
+        this.applicationRepository = applicationRepository;
+    }
 
     /**
      * Runs fraud screening and CIBIL for the given application.
@@ -48,9 +53,9 @@ public class FraudScreeningService {
     @Transactional
     public void runPostSaveScreening(String applicationId) {
         try {
-            Application app = Application.findByApplicationId(applicationId);
+            Application app = applicationRepository.findByApplicationId(applicationId).orElse(null);
             if (app == null) {
-                LOG.warnf("FraudScreeningService: APP=%s not found; skipping", applicationId);
+                LOG.warn("FraudScreeningService: APP={} not found; skipping", applicationId);
                 return;
             }
 
@@ -60,7 +65,7 @@ public class FraudScreeningService {
                 runFraudScreening(app, identifier);
             } else {
                 // PP7.9: fraud service inactive → skip fraud, go straight to CIBIL for individuals
-                LOG.infof("FraudScreeningService: fraud service inactive for APP=%s; bypassing to CIBIL", applicationId);
+                LOG.info("FraudScreeningService: fraud service inactive for APP={}; bypassing to CIBIL", applicationId);
                 app.fraudStatus      = "CLEAR";
                 app.fraudScreenedAt  = LocalDateTime.now();
                 app.fraudMessage     = "Fraud service inactive — bypassed (PP7.9)";
@@ -76,7 +81,7 @@ public class FraudScreeningService {
 
         } catch (Exception e) {
             // Non-blocking: any unexpected error is logged and suppressed
-            LOG.errorf("FraudScreeningService: unexpected error for APP=%s (%s); screening suppressed",
+            LOG.error("FraudScreeningService: unexpected error for APP={} ({}); screening suppressed",
                 applicationId, e.getMessage());
         }
     }
@@ -103,14 +108,14 @@ public class FraudScreeningService {
             app.updatedAt          = LocalDateTime.now();
 
             if (hardError) {
-                LOG.warnf("FraudScreeningService: caution hard error for APP=%s — second commit blocked (PP7.11)",
+                LOG.warn("FraudScreeningService: caution hard error for APP={} — second commit blocked (PP7.11)",
                     app.applicationId);
                 notificationService.notifyCautionHardError(app.applicationId);
                 return false;
             }
             return true;
         } catch (Exception e) {
-            LOG.warnf("FraudScreeningService: caution screening error for APP=%s (%s); allowing commit",
+            LOG.warn("FraudScreeningService: caution screening error for APP={} ({}); allowing commit",
                 app.applicationId, e.getMessage());
             return true;
         }
@@ -130,19 +135,19 @@ public class FraudScreeningService {
             case CLEAR -> {
                 app.fraudStatus = "CLEAR";
                 advanceToEligibleIfReady(app);
-                LOG.infof("FraudScreeningService: APP=%s fraud CLEAR", app.applicationId);
+                LOG.info("FraudScreeningService: APP={} fraud CLEAR", app.applicationId);
             }
             case NON_CLEAR -> {
                 app.fraudStatus  = "NON_CLEAR";
                 app.fraudMessage = result.message;
                 app.status       = ApplicationStatus.PENDING;
                 notificationService.notifyFraudNonClear(app.applicationId, result.message);
-                LOG.warnf("FraudScreeningService: APP=%s fraud NON_CLEAR — manual review required", app.applicationId);
+                LOG.warn("FraudScreeningService: APP={} fraud NON_CLEAR — manual review required", app.applicationId);
             }
             default -> {
                 app.fraudStatus  = "PENDING";
                 app.fraudMessage = result.message;
-                LOG.warnf("FraudScreeningService: APP=%s fraud result PENDING (%s)", app.applicationId, result.message);
+                LOG.warn("FraudScreeningService: APP={} fraud result PENDING ({})", app.applicationId, result.message);
             }
         }
     }
@@ -156,7 +161,7 @@ public class FraudScreeningService {
                 app.cibilRequestedAt  = LocalDateTime.now();
             }
         } catch (Exception e) {
-            LOG.warnf("FraudScreeningService: CIBIL submission failed for APP=%s (%s); transaction continues",
+            LOG.warn("FraudScreeningService: CIBIL submission failed for APP={} ({}); transaction continues",
                 app.applicationId, e.getMessage());
         }
     }

@@ -1,14 +1,13 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.HierarchyLevel;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "lead_assignments")
-public class LeadAssignment extends PanacheEntityBase {
+public class LeadAssignment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

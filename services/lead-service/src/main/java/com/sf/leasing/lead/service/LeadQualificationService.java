@@ -9,13 +9,15 @@ import com.sf.leasing.lead.domain.exception.ErrorCodes;
 import com.sf.leasing.lead.domain.model.Applicant;
 import com.sf.leasing.lead.domain.model.Lead;
 import com.sf.leasing.lead.infrastructure.adapter.CautionListAdapter;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
 import com.sf.leasing.lead.infrastructure.validation.IdentityFormatValidator;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import jakarta.persistence.PersistenceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -37,22 +39,28 @@ import java.util.List;
  *
  * Also handles lead closure (ClosureReason mandatory; record locked post-closure).
  */
-@ApplicationScoped
+@Service
 public class LeadQualificationService {
 
-    private static final Logger LOG = Logger.getLogger(LeadQualificationService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(LeadQualificationService.class);
 
-    @ConfigProperty(name = "qualification.active-lease-block-enabled", defaultValue = "false")
+    @Value("${qualification.active-lease-block-enabled:false}")
     boolean activeLeasBlockEnabled;
 
-    @ConfigProperty(name = "qualification.nri-passport-min-days", defaultValue = "90")
+    @Value("${qualification.nri-passport-min-days:90}")
     int nriPassportMinDays;
 
-    @Inject
+    @PersistenceContext
     EntityManager em;
 
-    @Inject
-    CautionListAdapter cautionListAdapter;
+    private final LeadRepository leadRepository;
+    private final CautionListAdapter cautionListAdapter;
+
+    public LeadQualificationService(LeadRepository leadRepository,
+                                    CautionListAdapter cautionListAdapter) {
+        this.leadRepository = leadRepository;
+        this.cautionListAdapter = cautionListAdapter;
+    }
 
     // -------------------------------------------------------
     // Pre-promotion validation (full 17-point checklist)
@@ -60,8 +68,8 @@ public class LeadQualificationService {
 
     @Transactional
     public List<String> validateForPromotion(String lrn) {
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null) throw new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn);
+        Lead lead = leadRepository.findByLrn(lrn).orElseThrow(
+            () -> new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn));
         if (lead.isClosed())    throw new BusinessException("LEAD_CLOSED",    "Closed leads cannot be promoted.");
         if (lead.isPromoted())  throw new BusinessException("ALREADY_PROMOTED", "Lead is already promoted.");
 
@@ -92,7 +100,7 @@ public class LeadQualificationService {
         // LP8.9: Applicant completeness
         checkApplicantCompleteness(mainApplicant);
 
-        LOG.infof("Pre-promotion validation passed for LRN=%s (warnings=%d)", lrn, warnings.size());
+        LOG.info("Pre-promotion validation passed for LRN={} (warnings={})", lrn, warnings.size());
         return warnings;
     }
 
@@ -102,8 +110,8 @@ public class LeadQualificationService {
 
     @Transactional
     public void closeLead(String lrn, CloseLeadRequest req, String userId) {
-        Lead lead = Lead.findByLrn(lrn);
-        if (lead == null)    throw new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn);
+        Lead lead = leadRepository.findByLrn(lrn).orElseThrow(
+            () -> new BusinessException("LEAD_NOT_FOUND", "Lead not found: " + lrn));
         if (lead.isClosed()) throw new BusinessException("LEAD_CLOSED", "Lead is already closed.");
         if (lead.isPromoted()) throw new BusinessException("LEAD_PROMOTED", "Promoted leads cannot be closed.");
 
@@ -115,7 +123,9 @@ public class LeadQualificationService {
         lead.updatedBy         = userId;
         lead.updatedAt         = LocalDateTime.now();
 
-        LOG.infof("Lead closed: LRN=%s reason=%s by=%s", lrn, req.closureReasonCode, userId);
+        leadRepository.save(lead);
+
+        LOG.info("Lead closed: LRN={} reason={} by={}", lrn, req.closureReasonCode, userId);
     }
 
     // -------------------------------------------------------

@@ -1,6 +1,5 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -8,7 +7,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "applicants")
-public class Applicant extends PanacheEntityBase {
+public class Applicant {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

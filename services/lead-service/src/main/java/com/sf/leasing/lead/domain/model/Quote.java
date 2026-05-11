@@ -1,17 +1,15 @@
 package com.sf.leasing.lead.domain.model;
 
 import com.sf.leasing.lead.domain.enums.QuoteStatus;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Entity
 @Table(name = "quotes")
-public class Quote extends PanacheEntityBase {
+public class Quote {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -131,19 +129,4 @@ public class Quote extends PanacheEntityBase {
     public boolean isApproved() { return status == QuoteStatus.APPROVED; }
     public boolean isShared()   { return status == QuoteStatus.SHARED; }
 
-    public static Quote findByQuoteId(String quoteId) {
-        return find("quoteId", quoteId).firstResult();
-    }
-
-    public static List<Quote> findByOpportunity(UUID opportunityId) {
-        return list("opportunityId ORDER BY version ASC", opportunityId);
-    }
-
-    public static int maxVersionForOpportunity(UUID opportunityId) {
-        Long max = (Long) getEntityManager()
-            .createQuery("SELECT MAX(q.version) FROM Quote q WHERE q.opportunityId = :oid")
-            .setParameter("oid", opportunityId)
-            .getSingleResult();
-        return max == null ? 0 : max.intValue();
-    }
 }

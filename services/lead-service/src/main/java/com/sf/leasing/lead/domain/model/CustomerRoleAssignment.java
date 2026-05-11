@@ -1,10 +1,8 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -14,7 +12,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "customer_role_assignments")
-public class CustomerRoleAssignment extends PanacheEntityBase {
+public class CustomerRoleAssignment {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -53,12 +51,4 @@ public class CustomerRoleAssignment extends PanacheEntityBase {
 
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
-
-    public static List<CustomerRoleAssignment> findByCustomerUuid(UUID customerUuid) {
-        return list("customerUuid", customerUuid);
-    }
-
-    public static CustomerRoleAssignment findByCustomerAndRole(UUID customerUuid, String roleType) {
-        return find("customerUuid = ?1 AND roleType = ?2", customerUuid, roleType).firstResult();
-    }
 }

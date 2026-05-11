@@ -1,20 +1,21 @@
 package com.sf.leasing.lead.infrastructure.adapter;
 
-import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 /**
  * External PAN validation adapter (PP3.1).
  * Stub mode returns synthetic valid data so development and testing proceed without external calls.
  * Real implementation wires to NSDL / CBDT PAN verification API.
  */
-@ApplicationScoped
+@Component
 public class PanValidationAdapter {
 
-    private static final Logger LOG = Logger.getLogger(PanValidationAdapter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PanValidationAdapter.class);
 
-    @ConfigProperty(name = "adapters.pan-validation.stub-mode", defaultValue = "true")
+    @Value("${adapters.pan-validation.stub-mode:true}")
     boolean stubMode;
 
     public record PanValidationResult(
@@ -35,7 +36,7 @@ public class PanValidationAdapter {
 
     public PanValidationResult validate(String pan) {
         if (stubMode) {
-            LOG.debugf("PanValidationAdapter STUB — PAN=%s", pan);
+            LOG.debug("PanValidationAdapter STUB — PAN={}", pan);
             return PanValidationResult.success(
                 "STUB LEGAL NAME PVT LTD",
                 "123, Stub Lane, Mumbai, Maharashtra - 400001"
@@ -43,7 +44,7 @@ public class PanValidationAdapter {
         }
 
         // TODO: wire real CBDT/NSDL endpoint
-        LOG.warnf("PanValidationAdapter real mode not implemented — PAN=%s", pan);
+        LOG.warn("PanValidationAdapter real mode not implemented — PAN={}", pan);
         return PanValidationResult.failure("SERVICE_UNAVAILABLE", "PAN validation service not configured.");
     }
 }

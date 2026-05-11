@@ -1,6 +1,5 @@
 package com.sf.leasing.lead.domain.model;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -13,7 +12,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "customers")
-public class Customer extends PanacheEntityBase {
+public class Customer {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -84,16 +83,4 @@ public class Customer extends PanacheEntityBase {
 
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
-
-    public static Customer findByCustomerId(String customerId) {
-        return find("customerId", customerId).firstResult();
-    }
-
-    public static Customer findByProspectUuid(UUID prospectUuid) {
-        return find("prospectUuid", prospectUuid).firstResult();
-    }
-
-    public static Customer findByApplicationUuid(UUID applicationUuid) {
-        return find("applicationUuid", applicationUuid).firstResult();
-    }
 }
