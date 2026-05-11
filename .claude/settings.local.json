@@ -35,7 +35,10 @@
       "Bash(git commit -m ' *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\SBaskar\\\\SFEnquireProcess\\\\services\" -Directory)",
       "Bash(Select-Object Name)",
-      "PowerShell(ls -Path \"C:\\\\Users\\\\SBaskar\\\\SFEnquireProcess\\\\services\" | Select-Object Name, @{Name=\"Type\";Expression={$_.GetType\\(\\).Name}})"
+      "PowerShell(ls -Path \"C:\\\\Users\\\\SBaskar\\\\SFEnquireProcess\\\\services\" | Select-Object Name, @{Name=\"Type\";Expression={$_.GetType\\(\\).Name}})",
+      "Bash(Get-ChildItem *)",
+      "Bash(del *)",
+      "Bash(git *)"
     ]
   }
 }

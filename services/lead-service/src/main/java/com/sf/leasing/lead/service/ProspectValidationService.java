@@ -9,6 +9,7 @@ import com.sf.leasing.lead.domain.model.ProspectKycValidation;
 import com.sf.leasing.lead.infrastructure.adapter.GstinValidationAdapter;
 import com.sf.leasing.lead.infrastructure.adapter.PanValidationAdapter;
 import com.sf.leasing.lead.infrastructure.locking.RedisSequenceGenerator;
+import com.sf.leasing.lead.infrastructure.persistence.LineageRepository;
 import com.sf.leasing.lead.infrastructure.persistence.ProspectKycValidationRepository;
 import com.sf.leasing.lead.infrastructure.persistence.ProspectRepository;
 import org.slf4j.Logger;
@@ -45,6 +46,7 @@ public class ProspectValidationService {
     private final NotificationService notificationService;
     private final ProspectRepository prospectRepository;
     private final ProspectKycValidationRepository prospectKycValidationRepository;
+    private final LineageRepository lineageRepository;
 
     public ProspectValidationService(PanValidationAdapter panAdapter,
                                      GstinValidationAdapter gstinAdapter,
@@ -52,7 +54,8 @@ public class ProspectValidationService {
                                      ExceptionQueueService exceptionQueueService,
                                      NotificationService notificationService,
                                      ProspectRepository prospectRepository,
-                                     ProspectKycValidationRepository prospectKycValidationRepository) {
+                                     ProspectKycValidationRepository prospectKycValidationRepository,
+                                     LineageRepository lineageRepository) {
         this.panAdapter = panAdapter;
         this.gstinAdapter = gstinAdapter;
         this.sequenceGenerator = sequenceGenerator;
@@ -60,6 +63,7 @@ public class ProspectValidationService {
         this.notificationService = notificationService;
         this.prospectRepository = prospectRepository;
         this.prospectKycValidationRepository = prospectKycValidationRepository;
+        this.lineageRepository = lineageRepository;
     }
 
     // -------------------------------------------------------
@@ -247,7 +251,7 @@ public class ProspectValidationService {
         prospect.prospectId = newId;
 
         // Update Lineage with the business ID
-        Lineage lineage = Lineage.findByProspectUuid(prospect.id);
+        Lineage lineage = lineageRepository.findByProspectUuid(prospect.id).orElse(null);
         if (lineage != null) {
             lineage.prospectBusinessId = newId;
             lineage.updatedAt          = LocalDateTime.now();

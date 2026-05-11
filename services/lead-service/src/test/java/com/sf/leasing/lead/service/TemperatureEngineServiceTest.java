@@ -4,7 +4,12 @@ import com.sf.leasing.lead.api.dto.request.OverrideTemperatureRequest;
 import com.sf.leasing.lead.domain.enums.*;
 import com.sf.leasing.lead.domain.exception.BusinessException;
 import com.sf.leasing.lead.domain.model.Lead;
+import com.sf.leasing.lead.infrastructure.persistence.LeadRepository;
+import com.sf.leasing.lead.infrastructure.persistence.TemperatureAuditRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -12,7 +17,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Unit-level tests for TemperatureEngineService business logic.
  * DB-dependent operations (runDailyDegradation) are tested via integration tests.
  */
+@ExtendWith(MockitoExtension.class)
 class TemperatureEngineServiceTest {
+
+    @Mock LeadRepository leadRepository;
+    @Mock TemperatureAuditRepository temperatureAuditRepository;
 
     // -------------------------------------------------------
     // computeTemperature (pure logic, no DB calls)
@@ -20,7 +29,7 @@ class TemperatureEngineServiceTest {
 
     @Test
     void shouldClassifyAsHotWhenManyRecentAttempts() {
-        TemperatureEngineService service = new TemperatureEngineService();
+        TemperatureEngineService service = new TemperatureEngineService(leadRepository, temperatureAuditRepository);
 
         Lead lead = buildLead();
         lead.callAttempts    = 2;

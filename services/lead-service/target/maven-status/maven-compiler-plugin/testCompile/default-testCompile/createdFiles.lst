@@ -1,13 +1,1 @@
-com\sf\leasing\lead\service\ProspectValidationServiceTest.class
-com\sf\leasing\lead\service\DeduplicationServiceTest.class
-com\sf\leasing\lead\service\LeadCreationServiceTest.class
-com\sf\leasing\lead\service\ProspectPromotionServiceTest.class
-com\sf\leasing\lead\service\OpportunityServiceTest.class
-com\sf\leasing\lead\service\MeetingServiceTest.class
 com\sf\leasing\lead\infrastructure\validation\AadhaarVerhoeffValidatorTest.class
-META-INF\panache-archive.marker
-com\sf\leasing\lead\service\TemperatureEngineServiceTest.class
-com\sf\leasing\lead\service\ApplicationServiceTest.class
-com\sf\leasing\lead\service\GeographicValidationServiceTest.class
-com\sf\leasing\lead\service\QuoteServiceTest.class
-com\sf\leasing\lead\infrastructure\validation\IdentityFormatValidatorTest.class

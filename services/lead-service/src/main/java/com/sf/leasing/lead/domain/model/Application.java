@@ -5,6 +5,7 @@ import com.sf.leasing.lead.domain.enums.CamStatus;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -99,6 +100,10 @@ public class Application {
 
     @Column(name = "modification_block_reason", length = 10)
     public String modificationBlockReason;
+
+    // Loaded by ApplicationService.buildResponse() — not persisted
+    @Transient
+    public List<ApplicationDocument> documents;
 
     // Audit
     @Column(name = "created_by", nullable = false, length = 50)
